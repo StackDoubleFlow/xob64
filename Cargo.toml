@@ -6,3 +6,7 @@ edition = "2024"
 [dependencies]
 object = "0.39.1"
 iced-x86 = "1.21.0"
+nix = "0.31.3"
+
+[dev-dependencies]
+assert_cmd = "2.2.2"
