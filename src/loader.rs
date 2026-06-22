@@ -11,6 +11,8 @@ use object::{
     read::elf::{ElfFile64, ElfSegment64},
 };
 
+use crate::runner;
+
 const PAGE_SIZE: LazyLock<usize> =
     LazyLock::new(|| unsafe { nix::libc::sysconf(nix::libc::_SC_PAGE_SIZE) as usize });
 
@@ -18,23 +20,10 @@ const PAGE_SIZE: LazyLock<usize> =
 struct ObjectPool {
     objects: Vec<EmuObject>,
     symbol_table: SymbolTable,
-    // We don't actually mark any ARM64 memory as executable, but we instead keep track of their ranges here.
-    // When they are attempted to be executed, we dynamically compile them to x86_64.
-    exec_ranges: Vec<ExecutableRange>,
-    executable_map: HashMap<u64, CompiledPage>,
 }
 
 // *const u8 is not normally Send
 unsafe impl Send for ObjectPool {}
-
-struct CompiledPage {
-    data: Vec<u8>,
-}
-
-struct ExecutableRange {
-    start: *const u8,
-    end: *const u8,
-}
 
 struct EmuObject {
     base_ptr: *const u8,
@@ -56,12 +45,7 @@ fn align_to_next_page(addr: usize) -> usize {
     (addr + *PAGE_SIZE - 1) & !(*PAGE_SIZE - 1)
 }
 
-unsafe fn load_segment(
-    segment: ElfSegment64,
-    fd: i32,
-    base_addr: *const u8,
-    executable_ranges: &mut Vec<ExecutableRange>,
-) {
+unsafe fn load_segment(segment: ElfSegment64, fd: i32, base_addr: *const u8) {
     let addr = unsafe { base_addr.add(segment.address() as usize) };
     let page_offset = addr as usize % *PAGE_SIZE;
     let aligned_addr = unsafe { addr.offset(-(page_offset as isize)) };
@@ -127,15 +111,7 @@ unsafe fn load_segment(
     }
 
     if segment.permissions().executable() {
-        let range = ExecutableRange {
-            start: mapped_addr,
-            end: mapping_end as *const u8,
-        };
-        println!(
-            "marking executable range: {:?}-{:?}",
-            range.start, range.end
-        );
-        executable_ranges.push(range);
+        runner::define_exec_range(mapped_addr, mapping_end as *const u8);
     }
 }
 
@@ -327,7 +303,7 @@ pub fn load_object(name: &str) -> usize {
     let base_addr = generate_suitable_base_addr(&elf);
     for segment in elf.segments() {
         unsafe {
-            load_segment(segment, fd, base_addr, &mut object_pool.exec_ranges);
+            load_segment(segment, fd, base_addr);
         }
     }
 

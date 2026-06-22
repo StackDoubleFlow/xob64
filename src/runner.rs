@@ -1,0 +1,65 @@
+mod compiler;
+
+use std::{
+    collections::HashMap,
+    sync::{Arc, LazyLock, Mutex},
+};
+
+const CHUNK_SIZE: usize = 512;
+
+struct ExecutableRange {
+    start: *const u8,
+    end: *const u8,
+}
+
+struct CompiledChunk {
+    // This maps ARM64 instruction indices from the original chunk to byte indices in the x86_64 executable data.
+    instr_map: Vec<u16>,
+    data: Vec<u8>,
+}
+
+#[derive(Default)]
+struct ExecPool {
+    // We don't actually mark any ARM64 memory as executable, but we instead keep track of their ranges here.
+    // When they are attempted to be executed, we dynamically compile them to x86_64.
+    exec_ranges: Vec<ExecutableRange>,
+    executable_map: HashMap<usize, CompiledChunk>,
+}
+
+unsafe impl Send for ExecPool {}
+
+static EXEC_POOL: LazyLock<Arc<Mutex<ExecPool>>> =
+    LazyLock::new(|| Arc::new(Mutex::new(ExecPool::default())));
+
+pub fn define_exec_range(start: *const u8, end: *const u8) {
+    let mut exec_pool = EXEC_POOL.lock().unwrap();
+    let range = ExecutableRange { start, end };
+    println!(
+        "marking executable range: {:?}-{:?}",
+        range.start, range.end
+    );
+    exec_pool.exec_ranges.push(range);
+}
+
+/// Translates the ARM64 code address to the translated x86_64 executable address
+pub fn get_exec(ptr: *const u8) -> *const u8 {
+    let mut exec_pool = EXEC_POOL.lock().unwrap();
+
+    let addr = ptr as usize;
+    let chunk_offset = addr % CHUNK_SIZE;
+    let chunk_addr = addr - chunk_offset;
+
+    let chunk = if let Some(chunk) = exec_pool.executable_map.get(&chunk_addr) {
+        chunk
+    } else {
+        let chunk = compiler::compile_chunk(chunk_addr);
+        exec_pool.executable_map.insert(chunk_addr, chunk);
+        exec_pool.executable_map.get(&chunk_addr).unwrap()
+    };
+
+    let instr_idx = chunk_offset / 4;
+    let byte_idx = chunk.instr_map[instr_idx] as usize;
+    let data_ref = &chunk.data[byte_idx];
+
+    data_ref as *const _
+}
