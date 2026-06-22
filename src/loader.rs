@@ -18,6 +18,10 @@ const PAGE_SIZE: LazyLock<usize> =
 struct ObjectPool {
     objects: Vec<EmuObject>,
     symbol_table: SymbolTable,
+    // We don't actually mark any ARM64 memory as executable, but we instead keep track of their ranges here.
+    // When they are attempted to be executed, we dynamically compile them to x86_64.
+    exec_ranges: Vec<ExecutableRange>,
+    executable_map: HashMap<u64, CompiledPage>,
 }
 
 // *const u8 is not normally Send
@@ -34,10 +38,8 @@ struct ExecutableRange {
 
 struct EmuObject {
     base_ptr: *const u8,
-    // We don't actually mark any ARM64 memory as executable, but we instead keep track of their ranges here.
-    // When they are attempted to be executed, we dynamically compile them to x86_64.
-    exec_ranges: Vec<ExecutableRange>,
-    executable_map: HashMap<u64, CompiledPage>,
+    init_array: Vec<*const u8>,
+    fini_array: Vec<*const u8>,
 }
 
 #[derive(Default)]
@@ -47,16 +49,6 @@ struct SymbolTable {
 
 impl SymbolTable {}
 
-impl EmuObject {
-    fn new(base_ptr: *const u8, exec_ranges: Vec<ExecutableRange>) -> Self {
-        Self {
-            base_ptr,
-            exec_ranges,
-            executable_map: HashMap::new(),
-        }
-    }
-}
-
 static OBJECT_POOL: LazyLock<Arc<Mutex<ObjectPool>>> =
     LazyLock::new(|| Arc::new(Mutex::new(ObjectPool::default())));
 
@@ -64,7 +56,12 @@ fn align_to_next_page(addr: usize) -> usize {
     (addr + *PAGE_SIZE - 1) & !(*PAGE_SIZE - 1)
 }
 
-unsafe fn load_segment(segment: ElfSegment64, fd: i32, base_addr: *const u8) {
+unsafe fn load_segment(
+    segment: ElfSegment64,
+    fd: i32,
+    base_addr: *const u8,
+    executable_ranges: &mut Vec<ExecutableRange>,
+) {
     let addr = unsafe { base_addr.add(segment.address() as usize) };
     let page_offset = addr as usize % *PAGE_SIZE;
     let aligned_addr = unsafe { addr.offset(-(page_offset as isize)) };
@@ -113,20 +110,32 @@ unsafe fn load_segment(segment: ElfSegment64, fd: i32, base_addr: *const u8) {
 
     println!("mapping successful: {:?}", mapped_addr);
 
+    let segment_end = mapped_addr as usize + aligned_size;
+    let mapping_end = align_to_next_page(segment_end);
     // If the file mapping ends before the segment does, then we need to zero out the rest
     if segment.size() > file_size {
+        let file_load_end = mapped_addr as usize + page_offset + file_size as usize;
+        let zero_len = mapping_end - file_load_end;
+        println!(
+            "zeroing out from {:x} to {:x}",
+            file_load_end,
+            file_load_end + zero_len
+        );
         unsafe {
-            let segment_end = mapped_addr as usize + aligned_size;
-            let mapping_end = align_to_next_page(segment_end);
-            let file_load_end = mapped_addr as usize + page_offset + file_size as usize;
-            let zero_len = mapping_end - file_load_end;
-            println!(
-                "zeroing out from {:x} to {:x}",
-                file_load_end,
-                file_load_end + zero_len
-            );
             nix::libc::memset(file_load_end as *mut nix::libc::c_void, 0, zero_len);
         }
+    }
+
+    if segment.permissions().executable() {
+        let range = ExecutableRange {
+            start: mapped_addr,
+            end: mapping_end as *const u8,
+        };
+        println!(
+            "marking executable range: {:?}-{:?}",
+            range.start, range.end
+        );
+        executable_ranges.push(range);
     }
 }
 
@@ -245,12 +254,62 @@ fn try_load_wrapped(name: &str, symbol_table: &mut SymbolTable) -> bool {
     }
 }
 
+fn collect_init_fini(elf: &ElfFile64, base_ptr: *const u8) -> (Vec<*const u8>, Vec<*const u8>) {
+    let base_addr = base_ptr as u64;
+
+    let mut init_array = Vec::new();
+    let mut fini_array = Vec::new();
+
+    let mut init_array_size = None;
+    let mut fini_array_size = None;
+    let mut init_array_ptr = None;
+    let mut fini_array_ptr = None;
+
+    let dynamic_table = elf.elf_dynamic_table().unwrap();
+    for dynamic in dynamic_table.iter() {
+        let addr_val = base_addr + dynamic.val;
+        match dynamic.tag {
+            elf::DT_INIT => init_array.insert(0, addr_val as *const u8),
+            elf::DT_FINI => fini_array.insert(0, addr_val as *const u8),
+            elf::DT_INIT_ARRAY => init_array_ptr = Some(addr_val as *const u64),
+            elf::DT_FINI_ARRAY => fini_array_ptr = Some(addr_val as *const u64),
+            elf::DT_INIT_ARRAYSZ => init_array_size = Some(dynamic.val),
+            elf::DT_FINI_ARRAYSZ => fini_array_size = Some(dynamic.val),
+            _ => {}
+        }
+    }
+
+    // Read .init_array
+    if let Some(size) = init_array_size
+        && let Some(array_ptr) = init_array_ptr
+    {
+        for idx in 0..(size / 8) {
+            let addr = unsafe { array_ptr.add(idx as usize).read() };
+            init_array.push(addr as *const u8);
+        }
+    }
+
+    // Read .fini_array
+    if let Some(size) = fini_array_size
+        && let Some(array_ptr) = fini_array_ptr
+    {
+        for idx in 0..(size / 8) {
+            let addr = unsafe { array_ptr.add(idx as usize).read() };
+            fini_array.push(addr as *const u8);
+        }
+    }
+
+    (init_array, fini_array)
+}
+
 pub fn load_object(name: &str) -> usize {
     let mut object_pool = OBJECT_POOL.lock().unwrap();
 
+    // Parse ELF
     let object_data = fs::read(name).unwrap();
     let elf = ElfFile64::parse(object_data.as_slice()).unwrap();
 
+    // Load object dependencies
     let dynamic_table = elf.elf_dynamic_table().unwrap();
     for dynamic in dynamic_table.iter() {
         if dynamic.tag == elf::DT_NEEDED {
@@ -262,16 +321,28 @@ pub fn load_object(name: &str) -> usize {
         }
     }
 
+    // Load object segments
     let fd_handle = File::open(name).unwrap();
     let fd = fd_handle.as_raw_fd();
     let base_addr = generate_suitable_base_addr(&elf);
     for segment in elf.segments() {
         unsafe {
-            load_segment(segment, fd, base_addr);
+            load_segment(segment, fd, base_addr, &mut object_pool.exec_ranges);
         }
     }
 
+    // Apply relocations
     resolve_relocations(&elf, base_addr as *mut u8, &object_pool.symbol_table);
 
-    todo!();
+    // Collect initialization and finalization functions
+    let (init_array, fini_array) = collect_init_fini(&elf, base_addr);
+
+    let idx = object_pool.objects.len();
+    object_pool.objects.push(EmuObject {
+        base_ptr: base_addr,
+        init_array,
+        fini_array,
+    });
+
+    idx
 }
