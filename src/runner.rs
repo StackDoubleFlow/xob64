@@ -1,3 +1,4 @@
+mod callbacks;
 mod compiler;
 
 use std::{
@@ -6,6 +7,7 @@ use std::{
 };
 
 const CHUNK_SIZE: usize = 512;
+const EXECUTABLE_ALLOC_SIZE: usize = 1024 * 16;
 
 struct ExecutableRange {
     start: *const u8,
@@ -15,7 +17,8 @@ struct ExecutableRange {
 struct CompiledChunk {
     // This maps ARM64 instruction indices from the original chunk to byte indices in the x86_64 executable data.
     instr_map: Vec<u16>,
-    data: Vec<u8>,
+    addr: *const u8,
+    len: usize,
 }
 
 #[derive(Default)]
@@ -24,6 +27,9 @@ struct ExecPool {
     // When they are attempted to be executed, we dynamically compile them to x86_64.
     exec_ranges: Vec<ExecutableRange>,
     executable_map: HashMap<usize, CompiledChunk>,
+    fully_used_allocs: Vec<*const u8>,
+    current_alloc: *const u8,
+    current_alloc_utilization: usize,
 }
 
 unsafe impl Send for ExecPool {}
@@ -52,14 +58,18 @@ pub fn get_exec(ptr: *const u8) -> *const u8 {
     let chunk = if let Some(chunk) = exec_pool.executable_map.get(&chunk_addr) {
         chunk
     } else {
-        let chunk = compiler::compile_chunk(chunk_addr);
+        let chunk = compiler::compile_chunk(&mut exec_pool, chunk_addr);
         exec_pool.executable_map.insert(chunk_addr, chunk);
         exec_pool.executable_map.get(&chunk_addr).unwrap()
     };
 
     let instr_idx = chunk_offset / 4;
     let byte_idx = chunk.instr_map[instr_idx] as usize;
-    let data_ref = &chunk.data[byte_idx];
+    unsafe { chunk.addr.add(byte_idx) }
+}
 
-    data_ref as *const _
+pub fn call(ptr: *const u8) {
+    let exec_ptr = get_exec(ptr);
+    todo!();
+    // unsafe { (*exec_ptr)() }
 }

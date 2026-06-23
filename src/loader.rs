@@ -27,7 +27,6 @@ unsafe impl Send for ObjectPool {}
 
 struct EmuObject {
     base_ptr: *const u8,
-    init_array: Vec<*const u8>,
     fini_array: Vec<*const u8>,
 }
 
@@ -86,8 +85,7 @@ unsafe fn load_segment(segment: ElfSegment64, fd: i32, base_addr: *const u8) {
     } as *const u8;
     if mapped_addr as isize == -1 {
         unsafe {
-            let c_str = std::ffi::CString::new("mmap failed").unwrap();
-            nix::libc::perror(c_str.as_ptr());
+            nix::libc::perror(c"mmap failed".as_ptr());
         }
         panic!("mapping failed");
     }
@@ -316,9 +314,15 @@ pub fn load_object(name: &str) -> usize {
     let idx = object_pool.objects.len();
     object_pool.objects.push(EmuObject {
         base_ptr: base_addr,
-        init_array,
         fini_array,
     });
+
+    // Release the lock
+    drop(object_pool);
+
+    for &ptr in &init_array {
+        runner::call(ptr);
+    }
 
     idx
 }
