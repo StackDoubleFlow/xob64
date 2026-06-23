@@ -68,9 +68,16 @@ pub fn get_exec(ptr: *const u8) -> *const u8 {
     unsafe { chunk.addr.add(byte_idx) }
 }
 
+#[repr(C)]
+struct ExecCtx {}
+
 pub fn call(ptr: *const u8) {
     let exec_ptr = get_exec(ptr);
     println!("calling {:?} -> {:?}", ptr, exec_ptr);
-    let func_ptr = unsafe { std::mem::transmute::<_, extern "C" fn()>(exec_ptr) };
-    func_ptr();
+    let mut ctx = ExecCtx {};
+    unsafe {
+        std::arch::asm!(
+            "call {}", in(reg) exec_ptr, in("rax") &mut ctx, clobber_abi("C")
+        )
+    }
 }

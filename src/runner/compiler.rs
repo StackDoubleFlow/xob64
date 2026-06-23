@@ -141,7 +141,10 @@ pub fn compile_instr(
 
     match arm_instr.op() {
         _ => {
-            make_call(ass, callbacks::unimplemented_arm_instr as *const () as u64)?;
+            make_call(
+                ass,
+                callbacks::unimplemented_arm_instr_landing_pad as *const () as u64,
+            )?;
         }
     }
 
