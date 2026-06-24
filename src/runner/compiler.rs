@@ -120,6 +120,11 @@ pub fn compile_instr(
         return Ok(());
     }
 
+    // Arithmetic and logic instructions
+    if arith::compile_instr(arm_instr, ass)? {
+        return Ok(());
+    }
+
     // Pointer authentication instructions (FEAT_PAuth)
     if pauth::compile_instr(arm_instr, ass)? {
         return Ok(());

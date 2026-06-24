@@ -4,8 +4,8 @@ use iced_x86::{
 };
 
 use crate::runner::compiler::register::{
-    RegClass, RegTranslation, get_reg_class, load_indirect, reg_operand_gpr64, reg_operand_no_mem,
-    translate_reg,
+    RegClass, RegTranslation, get_reg_class, load_indirect, reg_operand_gpr, reg_operand_no_mem,
+    translate_reg, unwrap_reg,
 };
 
 // Used for offset bits, which can only be up to 12 bits, so we don't have to worry about overflow.
@@ -25,7 +25,7 @@ fn process_addr_mode(
         bad64::Operand::MemOffset { reg, offset, .. } => (reg, any_offset_sign(offset), None),
         bad64::Operand::MemPreIdx { reg, imm } => {
             let imm = any_offset_sign(imm);
-            reg_operand_gpr64(reg).add_src(ass, imm)?;
+            reg_operand_gpr(reg).add_dest_imm(ass, imm)?;
             (reg, 0, None)
         }
         _ => todo!("memory address operand: {:?}", operand),
@@ -38,16 +38,9 @@ fn finish_post_index(
     post_index_offset: Option<i64>,
 ) -> Result<(), iced_x86::IcedError> {
     if let Some(offset) = post_index_offset {
-        reg_operand_gpr64(base_reg).add_src(ass, offset as i32)?;
+        reg_operand_gpr(base_reg).add_dest_imm(ass, offset as i32)?;
     }
     Ok(())
-}
-
-fn unwrap_reg(operand: bad64::Operand) -> bad64::Reg {
-    match operand {
-        bad64::Operand::Reg { reg, .. } => reg,
-        _ => panic!("unwrapped reg on non-reg operand: {:?}", operand),
-    }
 }
 
 fn make_store(
@@ -151,7 +144,7 @@ pub fn compile_instr(
     use bad64::Op;
     match arm_instr.op() {
         Op::STP => load_store_pair(ass, arm_instr, make_store)?,
-        Op::LDP => load_store_pair(ass, arm_instr, make_load)?,
+        // Op::LDP => load_store_pair(ass, arm_instr, make_load)?,
         _ => return Ok(false),
     }
 
