@@ -4,6 +4,7 @@ use iced_x86::{
     BlockEncoderOptions, Register,
     code_asm::{CodeAssembler, gpr64},
 };
+use num_traits::FromPrimitive;
 
 use crate::runner::{CHUNK_SIZE, CompiledChunk, EXECUTABLE_ALLOC_SIZE, ExecPool, callbacks};
 
@@ -135,7 +136,7 @@ fn make_call(ass: &mut CodeAssembler, target: u64) -> Result<(), iced_x86::IcedE
 enum RegTranslation {
     Direct(Register),
     // The register is stored at `idx` in the exec context
-    Indirect(usize),
+    Indirect(u32),
 }
 
 enum RegClass {
@@ -148,21 +149,65 @@ enum RegClass {
     FP8,
 }
 
-fn get_reg_class(reg: bad64::Reg) -> RegClass {
+// Returns the RegClass and the top-level Reg
+fn get_reg_class(reg: bad64::Reg) -> (RegClass, bad64::Reg) {
     use bad64::Reg;
-    let (gpr64_start, gpr64_end) = (Reg::X0 as u32, Reg::X31 as u32);
-    match reg as u32 {
-        (Reg::X0 as u32)..=Reg::X31 as usize => RegClass::GPR64,
+    let rn = reg as u32;
+    if reg == Reg::SP || rn >= Reg::X0 as u32 && rn <= Reg::X30 as u32 {
+        (RegClass::GPR64, reg)
+    } else if reg == Reg::WSP {
+        (RegClass::GPR32, Reg::SP)
+    } else if rn >= Reg::W0 as u32 && rn <= Reg::W30 as u32 {
+        (
+            RegClass::GPR32,
+            Reg::from_u32(rn - Reg::W0 as u32 + Reg::X0 as u32).unwrap(),
+        )
+    } else {
+        todo!("get_reg_class: {:?}", reg)
+    }
+}
+
+fn lower_reg_to_class(reg: Register, class: RegClass) -> Register {
+    let rn = reg as u32;
+    match class {
+        RegClass::GPR64 => {
+            if rn >= Register::RAX as u32 && rn <= Register::R15 as u32 {
+                reg
+            } else {
+                panic!("Tried to lower {:?} to GPR64", reg);
+            }
+        }
+        RegClass::GPR32 => {
+            if rn >= Register::RAX as u32 && rn <= Register::R15 as u32 {
+                reg.full_register32()
+            } else {
+                panic!("Tried to lower {:?} to GPR64", reg);
+            }
+        }
+        _ => todo!(),
+    }
+}
+
+fn translate_indirect_reg(reg: bad64::Reg) -> RegTranslation {
+    use RegTranslation::Indirect;
+    use bad64::Reg::*;
+    let rn = reg as u32;
+    if rn >= X0 as u32 && rn <= X18 as u32 {
+        Indirect(rn - X0 as u32)
+    } else if rn >= X24 as u32 && rn <= X28 as u32 {
+        Indirect(rn - X24 as u32 + 13)
+    } else {
+        unimplemented!("translating reg: {:?}", reg)
     }
 }
 
 fn translate_reg(reg: bad64::Reg) -> RegTranslation {
-    use RegTranslation::*;
+    use RegTranslation::Direct;
     use bad64::Reg::*;
     match reg {
         // These are sorted by frequency. See the comment at the top of the file.
         X0 => Direct(Register::RDI),
-        X31 => Direct(Register::RSP),
+        SP => Direct(Register::RSP),
         X1 => Direct(Register::RSI),
         X2 => Direct(Register::RDX),
         X19 => Direct(Register::RBX),
@@ -175,17 +220,8 @@ fn translate_reg(reg: bad64::Reg) -> RegTranslation {
         X5 => Direct(Register::R9),
         X23 => Direct(Register::R10),
         X30 => Direct(Register::R11),
-
-        X6 =>
-        X6..=X18 => Indirect(reg as usize - X6 as usize),
+        _ => translate_indirect_reg(reg),
     }
-}
-
-fn write_reg<F: FnMut(&mut CodeAssembler, Register)>(
-    ass: &mut CodeAssembler,
-    reg: bad64::Reg,
-    f: F,
-) {
 }
 
 pub fn compile_instr(

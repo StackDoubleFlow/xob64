@@ -576,5 +576,6 @@ dependencies = [
  "bad64",
  "iced-x86",
  "nix",
+ "num-traits",
  "object",
 ]

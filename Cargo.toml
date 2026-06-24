@@ -7,11 +7,12 @@ edition = "2024"
 object = "0.39.1"
 nix = "0.31.3"
 bad64 = "0.12.0"
+num-traits = "0.2.19"
 
 [dependencies.iced-x86]
 version = "1.21.0"
 default-features = false
-features = ["std", "code_asm", "intel", "decoder"]
+features = ["std", "code_asm", "intel", "decoder", "instr_info"]
 
 [dev-dependencies]
 assert_cmd = "2.2.2"
