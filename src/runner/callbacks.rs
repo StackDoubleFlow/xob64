@@ -1,4 +1,4 @@
-use crate::runner::ExecCtx;
+use crate::runner::{ExecCtx, from_exec};
 
 pub extern "C" fn invalid_arm_instr() {
     eprintln!("todo: invalid arm instruction");
@@ -15,9 +15,17 @@ pub extern "C" fn unimplemented_arm_instr_landing_pad() {
     )
 }
 
-extern "C" fn unimplemented_arm_instr(ctx: *mut ExecCtx, ret_ptr: *const u8) {
+extern "C" fn unimplemented_arm_instr(_ctx: *mut ExecCtx, ret_ptr: *const u8) {
     eprintln!("todo: unimplemented arm instruction");
-    eprintln!("ret ptr: {:?}", ret_ptr);
+    let arm_ptr = from_exec(ret_ptr).wrapping_sub(4);
+    let arm_code = unsafe { *(arm_ptr as *const u32) };
+    eprintln!(
+        "{:?}: {}",
+        arm_ptr,
+        // We should never fail to decode here since that an invalid instruction would have triggered the invalid_arm_instr callback.
+        // If it does, it might indicate that the code has changed/currupted.
+        bad64::decode(arm_code, arm_ptr as u64).expect("failed to decode instr")
+    );
     std::process::abort();
 }
 

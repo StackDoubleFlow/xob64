@@ -15,10 +15,12 @@ struct ExecutableRange {
 }
 
 struct CompiledChunk {
-    // This maps ARM64 instruction indices from the original chunk to byte indices in the x86_64 executable data.
+    /// This maps ARM64 instruction indices from the original chunk to byte indices in the x86_64 executable data.
     instr_map: Vec<u16>,
     addr: *const u8,
     len: usize,
+    /// The offset of the final jump instruction in the compiled chunk.
+    epilogue_offset: u16,
 }
 
 #[derive(Default)]
@@ -66,6 +68,41 @@ pub fn get_exec(ptr: *const u8) -> *const u8 {
     let instr_idx = chunk_offset / 4;
     let byte_idx = chunk.instr_map[instr_idx] as usize;
     unsafe { chunk.addr.add(byte_idx) }
+}
+
+// Translates the x86_64 executable address to the ARM64 code address
+pub fn from_exec(ptr: *const u8) -> *const u8 {
+    let addr = ptr as usize;
+
+    let exec_pool = EXEC_POOL.lock().unwrap();
+
+    // TODO: maybe write a faster lookup
+    for (&chunk_arm_addr, chunk) in &exec_pool.executable_map {
+        let chunk_addr = chunk.addr as usize;
+        if addr == chunk_addr + chunk.len {
+            // This address is just past the end of the chunk (which can happen when back mapping from return addresses)
+            return (chunk_addr + chunk.len) as *const u8;
+        }
+
+        if addr >= chunk_addr && addr < chunk_addr + chunk.len {
+            let chunk_offset = addr - chunk_addr;
+            // Start from the end of the chunk and work backwords until we find a matching offset or an offset that is
+            // less than what we're looking for, which indicates that the arm instruction maps to multiple x86_64
+            // instructions.
+            for (arm_offset, &offset) in chunk.instr_map.iter().enumerate().rev() {
+                if chunk_offset >= offset as usize {
+                    return (chunk_arm_addr + arm_offset as usize * 4) as *const u8;
+                }
+            }
+
+            panic!(
+                "from_exec found matching chunk, but no matching offset: ptr={:?}",
+                ptr
+            )
+        }
+    }
+
+    panic!("from_exec failed: ptr={:?}", ptr);
 }
 
 #[repr(C)]

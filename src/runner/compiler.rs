@@ -1,7 +1,7 @@
 mod dump;
 
 use iced_x86::{
-    BlockEncoderOptions,
+    BlockEncoderOptions, Register,
     code_asm::{CodeAssembler, gpr64},
 };
 
@@ -66,6 +66,7 @@ fn finalize_ass(
     exec_pool: &mut ExecPool,
     mut ass: CodeAssembler,
     x86_idxs: &[usize],
+    epilogue_offset: u16,
 ) -> CompiledChunk {
     if exec_pool.current_alloc.is_null() {
         alloc_new_region(exec_pool);
@@ -121,6 +122,7 @@ fn finalize_ass(
         instr_map,
         addr: target_addr,
         len: enc_result.code_buffer.len(),
+        epilogue_offset,
     }
 }
 
@@ -128,6 +130,62 @@ fn make_call(ass: &mut CodeAssembler, target: u64) -> Result<(), iced_x86::IcedE
     ass.mov(gpr64::rax, target)?;
     ass.call(gpr64::rax)?;
     Ok(())
+}
+
+enum RegTranslation {
+    Direct(Register),
+    // The register is stored at `idx` in the exec context
+    Indirect(usize),
+}
+
+enum RegClass {
+    GPR64,
+    GPR32,
+    FP128,
+    FP64,
+    FP32,
+    FP16,
+    FP8,
+}
+
+fn get_reg_class(reg: bad64::Reg) -> RegClass {
+    use bad64::Reg;
+    let (gpr64_start, gpr64_end) = (Reg::X0 as u32, Reg::X31 as u32);
+    match reg as u32 {
+        (Reg::X0 as u32)..=Reg::X31 as usize => RegClass::GPR64,
+    }
+}
+
+fn translate_reg(reg: bad64::Reg) -> RegTranslation {
+    use RegTranslation::*;
+    use bad64::Reg::*;
+    match reg {
+        // These are sorted by frequency. See the comment at the top of the file.
+        X0 => Direct(Register::RDI),
+        X31 => Direct(Register::RSP),
+        X1 => Direct(Register::RSI),
+        X2 => Direct(Register::RDX),
+        X19 => Direct(Register::RBX),
+        X3 => Direct(Register::RCX),
+        X20 => Direct(Register::R12),
+        X21 => Direct(Register::R13),
+        X4 => Direct(Register::R8),
+        X29 => Direct(Register::RBP),
+        X22 => Direct(Register::R14),
+        X5 => Direct(Register::R9),
+        X23 => Direct(Register::R10),
+        X30 => Direct(Register::R11),
+
+        X6 =>
+        X6..=X18 => Indirect(reg as usize - X6 as usize),
+    }
+}
+
+fn write_reg<F: FnMut(&mut CodeAssembler, Register)>(
+    ass: &mut CodeAssembler,
+    reg: bad64::Reg,
+    f: F,
+) {
 }
 
 pub fn compile_instr(
@@ -140,6 +198,7 @@ pub fn compile_instr(
     };
 
     match arm_instr.op() {
+        // bad64::Op::PACIASP
         _ => {
             make_call(
                 ass,
@@ -170,9 +229,14 @@ pub fn compile_chunk(exec_pool: &mut ExecPool, chunk_addr: usize) -> CompiledChu
         x86_idxs.push(ass.instructions().len());
         compile_instr(&arm_instr, &mut ass).unwrap();
     }
+    let epilogue_offset = ass
+        .instructions()
+        .len()
+        .try_into()
+        .expect("epilogue offset overflow");
     make_call(&mut ass, callbacks::end_of_chunk as *const () as u64).unwrap();
 
-    let compiled_chunk = finalize_ass(exec_pool, ass, &x86_idxs);
+    let compiled_chunk = finalize_ass(exec_pool, ass, &x86_idxs, epilogue_offset);
     dump::dump_translation(chunk_addr, &compiled_chunk);
     compiled_chunk
 }
