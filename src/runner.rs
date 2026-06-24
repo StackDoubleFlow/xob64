@@ -79,16 +79,16 @@ pub fn from_exec(ptr: *const u8) -> *const u8 {
     // TODO: maybe write a faster lookup
     for (&chunk_arm_addr, chunk) in &exec_pool.executable_map {
         let chunk_addr = chunk.addr as usize;
-        if addr == chunk_addr + chunk.len {
-            // This address is just past the end of the chunk (which can happen when back mapping from return addresses)
-            return (chunk_addr + chunk.len) as *const u8;
-        }
 
         if addr >= chunk_addr && addr < chunk_addr + chunk.len {
             let chunk_offset = addr - chunk_addr;
             // Start from the end of the chunk and work backwords until we find a matching offset or an offset that is
             // less than what we're looking for, which indicates that the arm instruction maps to multiple x86_64
             // instructions.
+            if chunk_offset >= chunk.epilogue_offset as usize {
+                // This address is just past the end of the chunk (which can happen when back mapping from return addresses)
+                return (chunk_arm_addr + CHUNK_SIZE) as *const u8;
+            }
             for (arm_offset, &offset) in chunk.instr_map.iter().enumerate().rev() {
                 if chunk_offset >= offset as usize {
                     return (chunk_arm_addr + arm_offset as usize * 4) as *const u8;
