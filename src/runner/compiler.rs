@@ -1,4 +1,5 @@
 mod arith;
+mod branch;
 mod dump;
 mod instr_utils;
 mod load_store;
@@ -123,6 +124,11 @@ pub fn compile_instr(
 
     // Arithmetic and logic instructions
     if arith::compile_instr(arm_instr, ass)? {
+        return Ok(());
+    }
+
+    // Branch instructions
+    if branch::compile_instr(arm_instr, ass)? {
         return Ok(());
     }
 

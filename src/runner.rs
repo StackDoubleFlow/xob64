@@ -106,7 +106,9 @@ pub fn from_exec(ptr: *const u8) -> *const u8 {
 }
 
 #[repr(C)]
-struct ExecCtx {}
+struct ExecCtx {
+    indirect_regs: [u64; 18],
+}
 
 pub fn call(ptr: *const u8) {
     let exec_ptr = get_exec(ptr);
