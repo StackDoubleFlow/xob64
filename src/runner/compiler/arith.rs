@@ -1,8 +1,8 @@
-use iced_x86::code_asm::{CodeAssembler, gpr32, gpr64};
+use iced_x86::code_asm::CodeAssembler;
 
-use crate::runner::compiler::register::{
-    RegTranslation, get_reg_class, lower_reg_to_class, reg_operand_gpr, reg_operand_no_mem,
-    store_indirect, translate_reg, unwrap_reg,
+use crate::runner::compiler::{
+    instr_utils::{codes::MOV_RR_CODES, make_rr},
+    register::{translate_reg, unwrap_reg},
 };
 
 fn move_to_dest(
@@ -10,24 +10,15 @@ fn move_to_dest(
     dest: bad64::Reg,
     src: bad64::Reg,
 ) -> Result<(), iced_x86::IcedError> {
-    let (dest_class, dest_top_level) = get_reg_class(dest);
-    let dest_translation = translate_reg(dest_top_level);
-
-    match dest_translation {
-        RegTranslation::Indirect(dest_indirect_idx) => {
-            let src_reg = reg_operand_no_mem(ass, src)?;
-            if let Some(src_reg) = gpr64::get_gpr64(src_reg) {
-                store_indirect(ass, src_reg, dest_indirect_idx)?;
-            } else {
-                let src_reg = gpr32::get_gpr32(src_reg).unwrap();
-                store_indirect(ass, src_reg, dest_indirect_idx)?;
-            }
-        }
-        RegTranslation::Direct(dest_reg) => {
-            let dest_reg = lower_reg_to_class(dest_reg, dest_class);
-            reg_operand_gpr(src).mov_src_reg(ass, dest_reg)?;
-        }
-    }
+    let (dest_translation, reg_class) = translate_reg(dest);
+    let (src_translation, _) = translate_reg(src);
+    make_rr(
+        ass,
+        &MOV_RR_CODES,
+        reg_class,
+        dest_translation,
+        src_translation,
+    )?;
     Ok(())
 }
 

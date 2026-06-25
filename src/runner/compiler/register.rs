@@ -1,12 +1,7 @@
-use bad64::Reg;
-use iced_x86::{
-    Register,
-    code_asm::{
-        AsmMemoryOperand, AsmRegister32, AsmRegister64, CodeAssembler, asm_traits::*, dword_ptr,
-        gpr32, gpr64, qword_ptr,
-    },
-};
+use iced_x86::{Instruction, OpKind, Register, code_asm::CodeAssembler};
 use num_traits::FromPrimitive;
+
+use crate::runner::compiler::instr_utils::{IcedResult, load_indirect, store_indirect};
 
 // Allocation for all 16 integer x86_64 registers:
 // x0 -> %rdi (1st argument)
@@ -41,7 +36,7 @@ use num_traits::FromPrimitive;
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum RegTranslation {
     Direct(Register),
-    // The register is stored at `idx` in the exec context
+    // The register is stored at `offset` in the exec context
     Indirect(u32),
 }
 
@@ -49,9 +44,48 @@ impl RegTranslation {
     pub fn is_indirect(&self) -> bool {
         matches!(self, RegTranslation::Indirect(_))
     }
+
+    pub fn set_operand(self, instr: &mut Instruction, idx: u32) {
+        match self {
+            RegTranslation::Direct(reg) => {
+                instr.set_op_kind(idx, OpKind::Register);
+                instr.set_op_register(idx, reg);
+            }
+            RegTranslation::Indirect(offset) => {
+                instr.set_op_kind(idx, OpKind::Memory);
+                instr.set_memory_base(Register::R15);
+                instr.set_memory_displacement32(offset);
+            }
+        }
+    }
+
+    pub fn pre_read(self, ass: &mut CodeAssembler, reg_class: RegClass) -> IcedResult<()> {
+        match self {
+            RegTranslation::Direct(_) => Ok(()),
+            RegTranslation::Indirect(offset) => load_indirect(ass, reg_class, offset),
+        }
+    }
+
+    /// Use this when memory operand is not possible, otherwise use `set_operand`.
+    /// If `is_write`, then `post_write` must be called, otherwise `pre_read` must be called.
+    pub fn set_reg_operand(self, instr: &mut Instruction, idx: u32, reg_class: RegClass) {
+        instr.set_op_kind(idx, OpKind::Register);
+        let reg = match self {
+            RegTranslation::Direct(reg) => reg,
+            RegTranslation::Indirect(_) => reg_class.scratch(),
+        };
+        instr.set_op_register(idx, reg);
+    }
+
+    pub fn post_write(self, ass: &mut CodeAssembler, reg_class: RegClass) -> IcedResult<()> {
+        match self {
+            RegTranslation::Direct(_) => Ok(()),
+            RegTranslation::Indirect(offset) => store_indirect(ass, reg_class, offset),
+        }
+    }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum RegClass {
     GPR64,
     GPR32,
@@ -60,6 +94,16 @@ pub enum RegClass {
     FP32,
     FP16,
     FP8,
+}
+
+impl RegClass {
+    pub fn scratch(self) -> Register {
+        match self {
+            RegClass::GPR64 => Register::RAX,
+            RegClass::GPR32 => Register::EAX,
+            _ => todo!(),
+        }
+    }
 }
 
 // Returns the RegClass and the top-level Reg
@@ -114,202 +158,32 @@ fn translate_indirect_reg(reg: bad64::Reg) -> RegTranslation {
     }
 }
 
-pub fn translate_reg(reg: bad64::Reg) -> RegTranslation {
-    use RegTranslation::Direct;
+pub fn translate_reg(reg: bad64::Reg) -> (RegTranslation, RegClass) {
     use bad64::Reg::*;
-    match reg {
-        // These are sorted by frequency. See the comment at the top of the file.
-        X0 => Direct(Register::RDI),
-        SP => Direct(Register::RSP),
-        X1 => Direct(Register::RSI),
-        X2 => Direct(Register::RDX),
-        X19 => Direct(Register::RBX),
-        X3 => Direct(Register::RCX),
-        X20 => Direct(Register::R12),
-        X21 => Direct(Register::R13),
-        X4 => Direct(Register::R8),
-        X29 => Direct(Register::RBP),
-        X22 => Direct(Register::R14),
-        X5 => Direct(Register::R9),
-        X23 => Direct(Register::R10),
-        X30 => Direct(Register::R11),
-        _ => translate_indirect_reg(reg),
-    }
-}
-
-#[derive(Clone, Copy)]
-pub enum RegOrMemory {
-    Register64(AsmRegister64),
-    Register32(AsmRegister32),
-    Memory(AsmMemoryOperand),
-}
-
-macro_rules! reg_or_memory_dest {
-    ($imm_name:ident, $reg_name:ident, $code_asm_ty:ident, $op_name:ident) => {
-        pub fn $imm_name<Src>(
-            self,
-            ass: &mut CodeAssembler,
-            src: Src,
-        ) -> Result<(), iced_x86::IcedError>
-        where
-            CodeAssembler: $code_asm_ty<AsmMemoryOperand, Src>
-                + $code_asm_ty<AsmRegister64, Src>
-                + $code_asm_ty<AsmRegister32, Src>,
-        {
-            match self {
-                RegOrMemory::Register64(reg) => ass.$op_name(reg, src),
-                RegOrMemory::Register32(reg) => ass.$op_name(reg, src),
-                RegOrMemory::Memory(mem) => ass.$op_name(mem, src),
-            }
-        }
-
-        pub fn $reg_name(
-            self,
-            ass: &mut CodeAssembler,
-            src: Register,
-        ) -> Result<(), iced_x86::IcedError> {
-            match self {
-                RegOrMemory::Register64(reg) => {
-                    if let Some(src) = gpr64::get_gpr64(src) {
-                        ass.$op_name(reg, src)
-                    } else {
-                        panic!("tried to use invalid register operand pairing")
-                    }
-                }
-                RegOrMemory::Register32(reg) => {
-                    if let Some(src) = gpr32::get_gpr32(src) {
-                        ass.$op_name(reg, src)
-                    } else {
-                        panic!("tried to use invalid register operand pairing")
-                    }
-                }
-                RegOrMemory::Memory(mem) => {
-                    if let Some(src) = gpr64::get_gpr64(src) {
-                        ass.$op_name(mem, src)
-                    } else {
-                        let src = gpr32::get_gpr32(src).unwrap();
-                        ass.$op_name(mem, src)
-                    }
-                }
-            }
-        }
-    };
-}
-
-macro_rules! reg_or_memory_src {
-    ($imm_name:ident, $reg_name:ident, $code_asm_ty:ident, $op_name:ident) => {
-        pub fn $imm_name<Dest>(
-            self,
-            ass: &mut CodeAssembler,
-            dest: Dest,
-        ) -> Result<(), iced_x86::IcedError>
-        where
-            CodeAssembler: $code_asm_ty<Dest, AsmMemoryOperand>
-                + $code_asm_ty<Dest, AsmRegister64>
-                + $code_asm_ty<Dest, AsmRegister32>,
-        {
-            match self {
-                RegOrMemory::Register64(reg) => ass.$op_name(dest, reg),
-                RegOrMemory::Register32(reg) => ass.$op_name(dest, reg),
-                RegOrMemory::Memory(mem) => ass.$op_name(dest, mem),
-            }
-        }
-
-        pub fn $reg_name(
-            self,
-            ass: &mut CodeAssembler,
-            dest: Register,
-        ) -> Result<(), iced_x86::IcedError> {
-            match self {
-                RegOrMemory::Register64(reg) => {
-                    if let Some(dest) = gpr64::get_gpr64(dest) {
-                        ass.$op_name(dest, reg)
-                    } else {
-                        panic!("tried to use invalid register operand pairing")
-                    }
-                }
-                RegOrMemory::Register32(reg) => {
-                    if let Some(dest) = gpr32::get_gpr32(dest) {
-                        ass.$op_name(dest, reg)
-                    } else {
-                        panic!("tried to use invalid register operand pairing")
-                    }
-                }
-                RegOrMemory::Memory(mem) => {
-                    if let Some(dest) = gpr64::get_gpr64(dest) {
-                        ass.$op_name(dest, mem)
-                    } else {
-                        let dest = gpr32::get_gpr32(dest).unwrap();
-                        ass.$op_name(dest, mem)
-                    }
-                }
-            }
-        }
-    };
-}
-
-impl RegOrMemory {
-    reg_or_memory_dest!(add_dest_imm, add_dest_reg, CodeAsmAdd, add);
-    reg_or_memory_src!(mov_src_imm, mov_src_reg, CodeAsmMov, mov);
-}
-
-pub fn load_indirect<Dest>(
-    ass: &mut CodeAssembler,
-    dest: Dest,
-    indirect_idx: u32,
-) -> Result<(), iced_x86::IcedError>
-where
-    CodeAssembler: CodeAsmMov<Dest, AsmMemoryOperand>,
-{
-    let mem = gpr64::r15 + indirect_idx * 8;
-    // TODO: does the size hint type matter here?
-    ass.mov(dest, qword_ptr(mem))
-}
-
-pub fn store_indirect<Src>(
-    ass: &mut CodeAssembler,
-    src: Src,
-    indirect_idx: u32,
-) -> Result<(), iced_x86::IcedError>
-where
-    CodeAssembler: CodeAsmMov<AsmMemoryOperand, Src>,
-{
-    let mem = gpr64::r15 + indirect_idx * 8;
-    // TODO: does the size hint type matter here?
-    ass.mov(qword_ptr(mem), src)
-}
-
-// Returns either a x86_64 register or memory operand
-pub fn reg_operand_gpr(reg: bad64::Reg) -> RegOrMemory {
-    match translate_reg(reg) {
-        RegTranslation::Direct(reg) => {
-            if let Some(reg) = gpr64::get_gpr64(reg) {
-                RegOrMemory::Register64(reg)
-            } else {
-                let reg = gpr32::get_gpr32(reg).unwrap();
-                RegOrMemory::Register32(reg)
-            }
-        }
-        RegTranslation::Indirect(reg) => RegOrMemory::Memory(qword_ptr(gpr64::r15 + reg * 8)),
-    }
-}
-
-pub fn reg_operand_no_mem(
-    ass: &mut CodeAssembler,
-    reg: bad64::Reg,
-) -> Result<Register, iced_x86::IcedError> {
     let (reg_class, top_level_reg) = get_reg_class(reg);
-    let translation = translate_reg(top_level_reg);
-    let indirect_idx = match translation {
-        RegTranslation::Direct(reg) => return Ok(lower_reg_to_class(reg, reg_class)),
-        RegTranslation::Indirect(idx) => idx,
+    let direct_translation = match top_level_reg {
+        // These are sorted by frequency. See the comment at the top of the file.
+        X0 => Register::RDI,
+        SP => Register::RSP,
+        X1 => Register::RSI,
+        X2 => Register::RDX,
+        X19 => Register::RBX,
+        X3 => Register::RCX,
+        X20 => Register::R12,
+        X21 => Register::R13,
+        X4 => Register::R8,
+        X29 => Register::RBP,
+        X22 => Register::R14,
+        X5 => Register::R9,
+        X23 => Register::R10,
+        X30 => Register::R11,
+
+        _ => return (translate_indirect_reg(reg), reg_class),
     };
-    match reg_class {
-        RegClass::GPR64 => load_indirect(ass, gpr64::rax, indirect_idx)?,
-        RegClass::GPR32 => load_indirect(ass, gpr32::eax, indirect_idx)?,
-        _ => todo!("reg_operand_no_mem: {:?}", reg_class),
-    }
-    Ok(lower_reg_to_class(Register::RAX, reg_class))
+    (
+        RegTranslation::Direct(lower_reg_to_class(direct_translation, reg_class)),
+        reg_class,
+    )
 }
 
 pub fn unwrap_reg(operand: bad64::Operand) -> bad64::Reg {

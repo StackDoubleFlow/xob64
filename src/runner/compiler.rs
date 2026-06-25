@@ -1,5 +1,6 @@
 mod arith;
 mod dump;
+mod instr_utils;
 mod load_store;
 mod pauth;
 mod register;

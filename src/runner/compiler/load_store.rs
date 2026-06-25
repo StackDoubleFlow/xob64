@@ -1,11 +1,8 @@
-use iced_x86::{
-    Register,
-    code_asm::{AsmRegister64, CodeAssembler, gpr32, gpr64},
-};
+use iced_x86::{Code, Instruction, MemoryOperand, Register, code_asm::CodeAssembler};
 
-use crate::runner::compiler::register::{
-    RegClass, RegTranslation, get_reg_class, load_indirect, reg_operand_gpr, reg_operand_no_mem,
-    translate_reg, unwrap_reg,
+use crate::runner::compiler::{
+    instr_utils::{codes::ADD_RI_CODES, load_indirect, make_ri},
+    register::{RegClass, RegTranslation, translate_reg, unwrap_reg},
 };
 
 // Used for offset bits, which can only be up to 12 bits, so we don't have to worry about overflow.
@@ -20,12 +17,13 @@ fn any_offset_sign(imm: bad64::Imm) -> i32 {
 fn process_addr_mode(
     ass: &mut CodeAssembler,
     operand: bad64::Operand,
-) -> Result<(bad64::Reg, i32, Option<i64>), iced_x86::IcedError> {
+) -> Result<(bad64::Reg, i32, Option<i32>), iced_x86::IcedError> {
     Ok(match operand {
         bad64::Operand::MemOffset { reg, offset, .. } => (reg, any_offset_sign(offset), None),
         bad64::Operand::MemPreIdx { reg, imm } => {
             let imm = any_offset_sign(imm);
-            reg_operand_gpr(reg).add_dest_imm(ass, imm)?;
+            let (reg_translation, reg_class) = translate_reg(reg);
+            make_ri(ass, &ADD_RI_CODES, reg_class, reg_translation, imm)?;
             (reg, 0, None)
         }
         _ => todo!("memory address operand: {:?}", operand),
@@ -34,44 +32,58 @@ fn process_addr_mode(
 
 fn finish_post_index(
     ass: &mut CodeAssembler,
-    base_reg: bad64::Reg,
-    post_index_offset: Option<i64>,
+    base_reg_translation: RegTranslation,
+    post_index_offset: Option<i32>,
 ) -> Result<(), iced_x86::IcedError> {
     if let Some(offset) = post_index_offset {
-        reg_operand_gpr(base_reg).add_dest_imm(ass, offset as i32)?;
+        make_ri(
+            ass,
+            &ADD_RI_CODES,
+            RegClass::GPR64,
+            base_reg_translation,
+            offset,
+        )?;
     }
     Ok(())
 }
 
 fn make_store(
     ass: &mut CodeAssembler,
-    reg: bad64::Reg,
-    base_reg: AsmRegister64,
+    src_translation: RegTranslation,
+    reg_class: RegClass,
+    base_reg: Register,
     offset: i32,
 ) -> Result<(), iced_x86::IcedError> {
-    let translated_reg = reg_operand_no_mem(ass, reg)?;
-    if let Some(reg) = gpr64::get_gpr64(translated_reg) {
-        ass.mov(base_reg + offset, reg)?;
-    } else {
-        let reg = gpr32::get_gpr32(translated_reg).unwrap();
-        ass.mov(base_reg + offset, reg)?;
-    }
+    src_translation.pre_read(ass, reg_class)?;
+    let code = match reg_class {
+        RegClass::GPR64 => Code::Mov_rm64_r64,
+        RegClass::GPR32 => Code::Mov_rm32_r32,
+        _ => todo!(),
+    };
+    let mem = MemoryOperand::with_base_displ(base_reg, offset as i64);
+    let mut instr = Instruction::with2(code, mem, Register::None)?;
+    src_translation.set_reg_operand(&mut instr, 1, reg_class);
+    ass.add_instruction(instr)?;
     Ok(())
 }
 
 fn make_load(
     ass: &mut CodeAssembler,
-    reg: bad64::Reg,
-    base_reg: AsmRegister64,
+    dest_translation: RegTranslation,
+    reg_class: RegClass,
+    base_reg: Register,
     offset: i32,
 ) -> Result<(), iced_x86::IcedError> {
-    let translated_reg = reg_operand_no_mem(ass, reg)?;
-    if let Some(reg) = gpr64::get_gpr64(translated_reg) {
-        ass.mov(reg, base_reg + offset)?;
-    } else {
-        let reg = gpr32::get_gpr32(translated_reg).unwrap();
-        ass.mov(reg, base_reg + offset)?;
-    }
+    let code = match reg_class {
+        RegClass::GPR64 => Code::Mov_r64_rm64,
+        RegClass::GPR32 => Code::Mov_r32_rm32,
+        _ => todo!(),
+    };
+    let mem = MemoryOperand::with_base_displ(base_reg, offset as i64);
+    let mut instr = Instruction::with2(code, Register::None, mem)?;
+    dest_translation.set_reg_operand(&mut instr, 0, reg_class);
+    ass.add_instruction(instr)?;
+    dest_translation.post_write(ass, reg_class)?;
     Ok(())
 }
 
@@ -80,26 +92,27 @@ fn load_store_pair(
     arm_instr: &bad64::Instruction,
     gen_fn: fn(
         ass: &mut CodeAssembler,
-        reg: bad64::Reg,
-        base_reg: AsmRegister64,
+        reg_translation: RegTranslation,
+        reg_class: RegClass,
+        base_reg: Register,
         offset: i32,
     ) -> Result<(), iced_x86::IcedError>,
 ) -> Result<(), iced_x86::IcedError> {
-    let (arm_base_reg, offset, post_index_offset) =
-        process_addr_mode(ass, arm_instr.operands()[2])?;
+    let operands = arm_instr.operands();
+    let (arm_base_reg, offset, post_index_offset) = process_addr_mode(ass, operands[2])?;
 
-    let base_reg_translation = translate_reg(arm_base_reg);
-    let reg1 = unwrap_reg(arm_instr.operands()[0]);
-    let reg1_translation = translate_reg(reg1);
-    let reg2 = unwrap_reg(arm_instr.operands()[1]);
-    let reg2_translation = translate_reg(reg2);
+    let (base_reg_translation, _) = translate_reg(arm_base_reg);
+    let reg1 = unwrap_reg(operands[0]);
+    let (reg1_translation, reg_class) = translate_reg(reg1);
+    let reg2 = unwrap_reg(operands[1]);
+    let (reg2_translation, _) = translate_reg(reg2);
 
     let double_indirect = base_reg_translation.is_indirect()
         && (reg1_translation.is_indirect() || reg2_translation.is_indirect());
 
     let base_reg = match base_reg_translation {
-        RegTranslation::Direct(base_reg) => gpr64::get_gpr64(base_reg).unwrap(),
-        RegTranslation::Indirect(indirect_idx) => {
+        RegTranslation::Direct(base_reg) => base_reg,
+        RegTranslation::Indirect(indirect_offset) => {
             if double_indirect {
                 // We have a situation where both the offset and store value are indirect.
                 // We need to load the offset into a register that isn't the scratch, and we need to pick a register that isn't going to be the load/store value of either reg1 or reg2.
@@ -107,32 +120,32 @@ fn load_store_pair(
                 let scratch = if reg1_translation == RegTranslation::Direct(Register::RDI)
                     || reg2_translation == RegTranslation::Direct(Register::RDI)
                 {
-                    gpr64::rsi
+                    Register::RSI
                 } else {
-                    gpr64::rdi
+                    Register::RDI
                 };
-                ass.push(scratch)?;
-                load_indirect(ass, scratch, indirect_idx)?;
+                ass.add_instruction(Instruction::with1(Code::Push_r64, scratch)?)?;
+                ass.add_instruction(Instruction::with2(
+                    Code::Mov_r64_rm64,
+                    scratch,
+                    MemoryOperand::with_base_displ(Register::R15, indirect_offset as i64),
+                )?)?;
                 scratch
             } else {
-                load_indirect(ass, gpr64::rax, indirect_idx)?;
-                gpr64::rax
+                load_indirect(ass, RegClass::GPR64, indirect_offset)?;
+                Register::RAX
             }
         }
     };
 
-    gen_fn(ass, reg1, base_reg, offset)?;
-    let incr = if get_reg_class(reg1).0 == RegClass::GPR32 {
-        4
-    } else {
-        8
-    };
-    gen_fn(ass, reg2, base_reg, offset + incr)?;
+    gen_fn(ass, reg1_translation, reg_class, base_reg, offset)?;
+    let incr = if reg_class == RegClass::GPR32 { 4 } else { 8 };
+    gen_fn(ass, reg2_translation, reg_class, base_reg, offset + incr)?;
 
     if double_indirect {
-        ass.pop(base_reg)?;
+        ass.add_instruction(Instruction::with1(Code::Pop_r64, base_reg)?)?;
     }
-    finish_post_index(ass, arm_base_reg, post_index_offset)?;
+    finish_post_index(ass, base_reg_translation, post_index_offset)?;
     Ok(())
 }
 
@@ -144,7 +157,7 @@ pub fn compile_instr(
     use bad64::Op;
     match arm_instr.op() {
         Op::STP => load_store_pair(ass, arm_instr, make_store)?,
-        Op::LDP => load_store_pair(ass, arm_instr, make_load)?,
+        // Op::LDP => load_store_pair(ass, arm_instr, make_load)?,
         _ => return Ok(false),
     }
 
