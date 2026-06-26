@@ -19,7 +19,7 @@ macro_rules! resumable_landing_pad {
         #[unsafe(naked)]
         pub extern "C" fn $name() {
             // We need to save all registers except:
-            // - %rbx, %rbp, %r12-%r15 (callee-saved)
+            // - %rbx, %rbp, %r12-%r15 (callee-saved, so our callback func will save them for us)
             // - %rax (scratch)
             std::arch::naked_asm!(
                 "mov [rsp - 8], rcx",
