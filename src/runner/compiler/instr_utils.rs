@@ -77,12 +77,14 @@ pub fn store_indirect(
     }
 }
 
-pub fn make_rr(
+/// Note that this function does not yet handle the case where dest is both an input and an output
+fn make_rr_impl(
     ass: &mut CodeAssembler,
     codes: &OpRRCodes,
     reg_class: RegClass,
     dest: RegTranslation,
     src: RegTranslation,
+    reads_dest: bool,
 ) -> IcedResult<()> {
     let (r_rm, rm_r) = match reg_class {
         RegClass::GPR32 => (codes.r32_rm32, codes.rm32_r32),
@@ -91,6 +93,9 @@ pub fn make_rr(
     };
     match (dest, src) {
         (RegTranslation::Indirect(dest_indirect_idx), RegTranslation::Indirect(_)) => {
+            if reads_dest {
+                load_indirect(ass, reg_class, dest_indirect_idx);
+            }
             let mut instr = Instruction::with1(r_rm, reg_class.scratch())?;
             src.set_operand(&mut instr, 1);
             ass.add_instruction(instr)?;
@@ -106,6 +111,26 @@ pub fn make_rr(
     }
 
     Ok(())
+}
+
+/// If you are trying to make a mov, use `make_mov_rr` instead.
+pub fn make_rr(
+    ass: &mut CodeAssembler,
+    codes: &OpRRCodes,
+    reg_class: RegClass,
+    dest: RegTranslation,
+    src: RegTranslation,
+) -> IcedResult<()> {
+    make_rr_impl(ass, codes, reg_class, dest, src, true)
+}
+
+pub fn make_mov_rr(
+    ass: &mut CodeAssembler,
+    reg_class: RegClass,
+    dest: RegTranslation,
+    src: RegTranslation,
+) -> IcedResult<()> {
+    make_rr_impl(ass, &codes::MOV_RR_CODES, reg_class, dest, src, false)
 }
 
 pub fn make_ri(
