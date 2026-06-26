@@ -157,7 +157,7 @@ pub fn compile_instr(
     use bad64::Op;
     match arm_instr.op() {
         Op::STP => load_store_pair(ass, arm_instr, make_store)?,
-        // Op::LDP => load_store_pair(ass, arm_instr, make_load)?,
+        Op::LDP => load_store_pair(ass, arm_instr, make_load)?,
         _ => return Ok(false),
     }
 

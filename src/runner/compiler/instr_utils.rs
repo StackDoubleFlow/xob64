@@ -134,6 +134,14 @@ pub fn make_mov_rr(
     make_rr_impl(ass, &codes::MOV_RR_CODES, reg_class, dest, src, false)
 }
 
+pub fn make_mov_ri64(ass: &mut CodeAssembler, dest: RegTranslation, imm: i64) -> IcedResult<()> {
+    let mut instr = Instruction::with2(Code::Mov_r64_imm64, Register::None, imm)?;
+    dest.set_reg_operand(&mut instr, 0, RegClass::GPR64);
+    ass.add_instruction(instr)?;
+    dest.post_write(ass, RegClass::GPR64)?;
+    Ok(())
+}
+
 pub fn make_ri(
     ass: &mut CodeAssembler,
     codes: &OpRICodes,
@@ -156,4 +164,11 @@ pub fn make_call(ass: &mut CodeAssembler, target: u64) -> Result<(), iced_x86::I
     ass.mov(gpr64::rax, target)?;
     ass.call(gpr64::rax)?;
     Ok(())
+}
+
+pub fn label_target(label_operand: bad64::Operand) -> usize {
+    match label_operand {
+        bad64::Operand::Label(bad64::Imm::Unsigned(target)) => target as usize,
+        _ => unreachable!(),
+    }
 }

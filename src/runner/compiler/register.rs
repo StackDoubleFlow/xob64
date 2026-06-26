@@ -120,6 +120,8 @@ pub fn get_reg_class(reg: bad64::Reg) -> (RegClass, bad64::Reg) {
             RegClass::GPR32,
             Reg::from_u32(rn - Reg::W0 as u32 + Reg::X0 as u32).unwrap(),
         )
+    } else if rn >= Reg::Q0 as u32 && rn <= Reg::Q31 as u32 {
+        (RegClass::FP128, reg)
     } else {
         todo!("get_reg_class: {:?}", reg)
     }

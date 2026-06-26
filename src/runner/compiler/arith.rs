@@ -1,8 +1,8 @@
 use iced_x86::code_asm::CodeAssembler;
 
 use crate::runner::compiler::{
-    instr_utils::{codes::MOV_RI_CODES, make_mov_rr, make_ri},
-    register::{translate_reg, unwrap_reg},
+    instr_utils::{codes::MOV_RI_CODES, label_target, make_mov_ri64, make_mov_rr, make_ri},
+    register::{RegClass, translate_reg, unwrap_reg},
 };
 
 // Given `ORR dest, src1, src2`
@@ -57,10 +57,9 @@ pub fn compile_instr(
     ass: &mut CodeAssembler,
 ) -> Result<bool, iced_x86::IcedError> {
     use bad64::Op;
+    let operands = arm_instr.operands();
     match arm_instr.op() {
         Op::MOV => {
-            let operands = arm_instr.operands();
-
             let dest = unwrap_reg(operands[0]);
             let (dest_translation, reg_class) = translate_reg(dest);
 
@@ -79,6 +78,13 @@ pub fn compile_instr(
                 }
                 operand => todo!("operand: {:?}", operand),
             }
+        }
+        Op::ADRP => {
+            let dest = unwrap_reg(operands[0]);
+            let (dest_translation, reg_class) = translate_reg(dest);
+            assert_eq!(reg_class, RegClass::GPR64);
+            let addr = label_target(operands[1]);
+            make_mov_ri64(ass, dest_translation, addr as i64)?;
         }
         // Op::ORR => {
 

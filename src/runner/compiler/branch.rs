@@ -6,16 +6,9 @@ use iced_x86::{
 
 use crate::runner::{
     CHUNK_SIZE, ExecPool, callbacks,
-    compiler::instr_utils::{IcedResult, make_call},
+    compiler::instr_utils::{IcedResult, label_target, make_call},
     get_exec,
 };
-
-fn label_target(label_operand: Operand) -> usize {
-    match label_operand {
-        Operand::Label(Imm::Unsigned(target)) => target as usize,
-        _ => unreachable!(),
-    }
-}
 
 pub fn rewrite_branch(arm_instr: &bad64::Instruction, call_ptr: *const u8) -> *const u8 {
     assert!(arm_instr.op() == bad64::Op::BL || arm_instr.op() == bad64::Op::B);
