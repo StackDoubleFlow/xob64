@@ -1,7 +1,10 @@
 use iced_x86::{Instruction, OpKind, Register, code_asm::CodeAssembler};
 use num_traits::FromPrimitive;
 
-use crate::runner::compiler::instr_utils::{IcedResult, load_indirect, store_indirect};
+use crate::runner::{
+    ExecCtx,
+    compiler::instr_utils::{IcedResult, load_indirect, store_indirect},
+};
 
 // Allocation for all 16 integer x86_64 registers:
 // x0 -> %rdi (1st argument)
@@ -28,7 +31,7 @@ use crate::runner::compiler::instr_utils::{IcedResult, load_indirect, store_indi
 
 // Translated Aarch64 registers:
 // x0-x5, x19-x23, x29-x31
-// v0-v7, v16-v23
+// v0-v7, v16-v22
 // Emulated Aarch64 registers:
 // x6-x18, x24-x28 (18 64-bit registers)
 // v8-v15, v23-v31 (17 128-bit registers)
@@ -102,7 +105,9 @@ impl RegClass {
         match self {
             RegClass::GPR64 => Register::RAX,
             RegClass::GPR32 => Register::EAX,
-            _ => todo!(),
+            RegClass::FP128 | RegClass::FP64 | RegClass::FP32 | RegClass::FP16 | RegClass::FP8 => {
+                Register::XMM15
+            }
         }
     }
 }
@@ -122,6 +127,26 @@ pub fn get_reg_class(reg: bad64::Reg) -> (RegClass, bad64::Reg) {
         )
     } else if rn >= Reg::Q0 as u32 && rn <= Reg::Q31 as u32 {
         (RegClass::FP128, reg)
+    } else if rn >= Reg::D0 as u32 && rn <= Reg::D31 as u32 {
+        (
+            RegClass::FP64,
+            Reg::from_u32(rn - Reg::D0 as u32 + Reg::Q0 as u32).unwrap(),
+        )
+    } else if rn >= Reg::S0 as u32 && rn <= Reg::S31 as u32 {
+        (
+            RegClass::FP32,
+            Reg::from_u32(rn - Reg::S0 as u32 + Reg::Q0 as u32).unwrap(),
+        )
+    } else if rn >= Reg::H0 as u32 && rn <= Reg::H31 as u32 {
+        (
+            RegClass::FP16,
+            Reg::from_u32(rn - Reg::H0 as u32 + Reg::Q0 as u32).unwrap(),
+        )
+    } else if rn >= Reg::B0 as u32 && rn <= Reg::B31 as u32 {
+        (
+            RegClass::FP8,
+            Reg::from_u32(rn - Reg::B0 as u32 + Reg::Q0 as u32).unwrap(),
+        )
     } else {
         todo!("get_reg_class: {:?}", reg)
     }
@@ -144,18 +169,24 @@ pub fn lower_reg_to_class(reg: Register, class: RegClass) -> Register {
                 panic!("Tried to lower {:?} to GPR64", reg);
             }
         }
-        _ => todo!(),
+        // These all have the same register names in x86_64, just the instruction changes
+        RegClass::FP128 | RegClass::FP64 | RegClass::FP32 | RegClass::FP16 | RegClass::FP8 => reg,
     }
 }
 
 fn translate_indirect_reg(reg: bad64::Reg) -> RegTranslation {
     use RegTranslation::Indirect;
     use bad64::Reg::*;
+    let fp_offset = std::mem::offset_of!(ExecCtx, indirect_fp_regs) as u32;
     let rn = reg as u32;
     if rn >= X0 as u32 && rn <= X18 as u32 {
-        Indirect(rn - X0 as u32)
+        Indirect((rn - X0 as u32) * 8)
     } else if rn >= X24 as u32 && rn <= X28 as u32 {
-        Indirect(rn - X24 as u32 + 13)
+        Indirect((rn - X24 as u32 + 13) * 8)
+    } else if rn >= Q8 as u32 && rn <= Q15 as u32 {
+        Indirect(fp_offset + (rn - X8 as u32) * 16)
+    } else if rn >= Q23 as u32 && rn <= Q31 as u32 {
+        Indirect(fp_offset + (rn - X8 as u32 + 8) * 16)
     } else {
         unimplemented!("translating reg: {:?}", reg)
     }
@@ -181,7 +212,23 @@ pub fn translate_reg(reg: bad64::Reg) -> (RegTranslation, RegClass) {
         X23 => Register::R10,
         X30 => Register::R11,
 
-        _ => return (translate_indirect_reg(reg), reg_class),
+        Q0 => Register::XMM0,
+        Q1 => Register::XMM1,
+        Q2 => Register::XMM2,
+        Q3 => Register::XMM3,
+        Q4 => Register::XMM4,
+        Q5 => Register::XMM5,
+        Q6 => Register::XMM6,
+        Q7 => Register::XMM7,
+        Q16 => Register::XMM8,
+        Q17 => Register::XMM9,
+        Q18 => Register::XMM10,
+        Q19 => Register::XMM11,
+        Q20 => Register::XMM12,
+        Q21 => Register::XMM13,
+        Q22 => Register::XMM14,
+
+        _ => return (translate_indirect_reg(top_level_reg), reg_class),
     };
     (
         RegTranslation::Direct(lower_reg_to_class(direct_translation, reg_class)),

@@ -103,6 +103,7 @@ pub fn from_exec(ptr: *const u8) -> *const u8 {
 #[derive(Default)]
 struct ExecCtx {
     indirect_regs: [u64; 18],
+    indirect_fp_regs: [u128; 17],
 }
 
 pub fn call(ptr: *const u8) {

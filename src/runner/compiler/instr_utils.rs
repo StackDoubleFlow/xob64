@@ -1,6 +1,6 @@
 use iced_x86::{
     Code, Instruction, Register,
-    code_asm::{CodeAssembler, gpr32, gpr64},
+    code_asm::{CodeAssembler, gpr32, gpr64, xmm},
 };
 
 use crate::runner::compiler::register::{RegClass, RegTranslation};
@@ -74,6 +74,8 @@ pub fn store_indirect(
     match reg_class {
         RegClass::GPR32 => ass.mov(mem, gpr32::eax),
         RegClass::GPR64 => ass.mov(mem, gpr64::rax),
+        RegClass::FP64 => ass.movsd_2(mem, xmm::xmm15),
+        RegClass::FP32 => ass.movss(mem, xmm::xmm15),
         _ => todo!(),
     }
 }

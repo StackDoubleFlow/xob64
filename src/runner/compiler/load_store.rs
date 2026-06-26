@@ -26,6 +26,10 @@ fn process_addr_mode(
             make_ri(ass, &ADD_RI_CODES, reg_class, reg_translation, imm)?;
             (reg, 0, None)
         }
+        bad64::Operand::MemPostIdxImm { reg, imm } => {
+            let imm = any_offset_sign(imm);
+            (reg, 0, Some(imm))
+        }
         _ => todo!("memory address operand: {:?}", operand),
     })
 }
@@ -77,6 +81,8 @@ fn make_load(
     let code = match reg_class {
         RegClass::GPR64 => Code::Mov_r64_rm64,
         RegClass::GPR32 => Code::Mov_r32_rm32,
+        RegClass::FP64 => Code::Movsd_xmm_xmmm64,
+        RegClass::FP32 => Code::Movss_xmm_xmmm32,
         _ => todo!(),
     };
     let mem = MemoryOperand::with_base_displ(base_reg, offset as i64);
