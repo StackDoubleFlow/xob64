@@ -52,6 +52,11 @@ pub fn dump_translation(chunk_addr: usize, compiled_chunk: &CompiledChunk) {
         DecoderOptions::NONE,
     );
     let mut formatter = X86Formatter::default();
+    formatter.inner.options_mut().set_uppercase_hex(false);
+    formatter
+        .inner
+        .options_mut()
+        .set_space_after_operand_separator(true);
 
     let mut decoded_x86_instr = Instruction::new();
     let x86_offset = |instr: &Instruction| instr.ip() as usize - compiled_chunk.addr as usize;
