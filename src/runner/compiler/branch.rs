@@ -30,7 +30,7 @@ pub fn rewrite_branch(arm_instr: &bad64::Instruction, ret_ptr: *const u8) -> *co
     ass.jmp(gpr64::rax).unwrap();
 
     let new_code = ass.assemble(code_addr as u64).unwrap();
-    assert!(new_code.len() == 10);
+    assert_eq!(new_code.len(), 10);
     let code_slice = unsafe { std::slice::from_raw_parts_mut(code_addr, 10) };
     code_slice.copy_from_slice(&new_code);
 

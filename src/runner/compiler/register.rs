@@ -55,6 +55,7 @@ impl RegTranslation {
                 instr.set_op_kind(idx, OpKind::Memory);
                 instr.set_memory_base(Register::R15);
                 instr.set_memory_displacement32(offset);
+                instr.set_memory_displ_size(1);
             }
         }
     }

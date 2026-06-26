@@ -1,7 +1,7 @@
 use iced_x86::code_asm::CodeAssembler;
 
 use crate::runner::compiler::{
-    instr_utils::make_mov_rr,
+    instr_utils::{codes::MOV_RI_CODES, make_mov_rr, make_ri},
     register::{translate_reg, unwrap_reg},
 };
 
@@ -51,17 +51,6 @@ use crate::runner::compiler::{
 // mov [r15 + dest_offset], rax; Transfer to indirect dest
 // ```
 
-fn move_to_dest(
-    ass: &mut CodeAssembler,
-    dest: bad64::Reg,
-    src: bad64::Reg,
-) -> Result<(), iced_x86::IcedError> {
-    let (dest_translation, reg_class) = translate_reg(dest);
-    let (src_translation, _) = translate_reg(src);
-    make_mov_rr(ass, reg_class, dest_translation, src_translation)?;
-    Ok(())
-}
-
 // Returns true if the instruction was successfully translated.
 pub fn compile_instr(
     arm_instr: &bad64::Instruction,
@@ -71,9 +60,25 @@ pub fn compile_instr(
     match arm_instr.op() {
         Op::MOV => {
             let operands = arm_instr.operands();
+
             let dest = unwrap_reg(operands[0]);
-            let src = unwrap_reg(operands[1]);
-            move_to_dest(ass, dest, src)?;
+            let (dest_translation, reg_class) = translate_reg(dest);
+
+            match operands[1] {
+                bad64::Operand::Reg { reg: src, .. } => {
+                    let (src_translation, _) = translate_reg(src);
+                    make_mov_rr(ass, reg_class, dest_translation, src_translation)?;
+                }
+                bad64::Operand::Imm64 { imm, .. } | bad64::Operand::Imm32 { imm, .. } => {
+                    let bad64::Imm::Unsigned(imm) = imm else {
+                        unreachable!()
+                    };
+                    // The immediate is really encoded in 16 bits, so this cast is ok
+                    let imm = imm as i32;
+                    make_ri(ass, &MOV_RI_CODES, reg_class, dest_translation, imm)?;
+                }
+                operand => todo!("operand: {:?}", operand),
+            }
         }
         // Op::ORR => {
 

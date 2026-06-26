@@ -13,6 +13,7 @@ pub mod codes {
 
     pub const MOV_RR_CODES: OpRRCodes =
         OpRRCodes::new(Mov_r32_rm32, Mov_rm32_r32, Mov_r64_rm64, Mov_rm64_r64);
+    pub const MOV_RI_CODES: OpRICodes = OpRICodes::new(Mov_rm32_imm32, Mov_rm64_imm32);
 
     pub const ADD_RR_CODES: OpRRCodes =
         OpRRCodes::new(Add_r32_rm32, Add_rm32_r32, Add_r64_rm64, Add_rm64_r64);
