@@ -1,6 +1,5 @@
-use bad64::{Imm, Operand};
 use iced_x86::{
-    Code, Instruction, MemoryOperand, Register,
+    Code, Instruction,
     code_asm::{CodeAssembler, gpr64, ptr},
 };
 
@@ -29,18 +28,16 @@ pub fn rewrite_branch(arm_instr: &bad64::Instruction, call_ptr: *const u8) -> *c
 
 fn make_jump(
     ass: &mut CodeAssembler,
-    label_operand: Operand,
-    branch_corrections: &mut Vec<usize>,
+    label_operand: bad64::Operand,
     chunk_addr: usize,
     exec_pool: &mut ExecPool,
 ) -> IcedResult<()> {
     let target = label_target(label_operand);
     if target >= chunk_addr && target < chunk_addr + CHUNK_SIZE {
         let arm_instr_idx = (target - chunk_addr) / 4;
-        branch_corrections.push(ass.instructions().len());
-        ass.add_instruction(Instruction::with1(
-            Code::Jmp_rm64,
-            MemoryOperand::with_base_displ(Register::RIP, arm_instr_idx as i64),
+        ass.add_instruction(Instruction::with_branch(
+            Code::Jmp_rel32_64,
+            arm_instr_idx as u64 + 1,
         )?)?;
     } else {
         let chunk_offset = target % CHUNK_SIZE;
@@ -66,31 +63,18 @@ pub fn compile_instr(
     arm_instr: &bad64::Instruction,
     ass: &mut CodeAssembler,
     exec_pool: &mut ExecPool,
-    branch_corrections: &mut Vec<usize>,
     chunk_addr: usize,
 ) -> Result<bool, iced_x86::IcedError> {
     use bad64::Op;
     match arm_instr.op() {
         Op::B => {
-            make_jump(
-                ass,
-                arm_instr.operands()[0],
-                branch_corrections,
-                chunk_addr,
-                exec_pool,
-            )?;
+            make_jump(ass, arm_instr.operands()[0], chunk_addr, exec_pool)?;
         }
         Op::BL => {
             let label = ass.fwd()?;
             ass.lea(gpr64::r11, ptr(label))?;
 
-            make_jump(
-                ass,
-                arm_instr.operands()[0],
-                branch_corrections,
-                chunk_addr,
-                exec_pool,
-            )?;
+            make_jump(ass, arm_instr.operands()[0], chunk_addr, exec_pool)?;
 
             // TODO: Maybe just re-use the label the next instruction should already have
             ass.anonymous_label()?;
