@@ -17,21 +17,18 @@ fn label_target(label_operand: Operand) -> usize {
     }
 }
 
-pub fn rewrite_branch(arm_instr: &bad64::Instruction, ret_ptr: *const u8) -> *const u8 {
+pub fn rewrite_branch(arm_instr: &bad64::Instruction, call_ptr: *const u8) -> *const u8 {
     assert!(arm_instr.op() == bad64::Op::BL || arm_instr.op() == bad64::Op::B);
     let label_target = label_target(arm_instr.operands()[0]);
     let exec_ptr = get_exec(label_target as *const u8);
-
-    // The mov + call is 10 byte
-    let code_addr = unsafe { ret_ptr.byte_offset(-12).cast_mut() };
 
     let mut ass = CodeAssembler::new(64).unwrap();
     ass.mov(gpr64::rax, exec_ptr as u64).unwrap();
     ass.jmp(gpr64::rax).unwrap();
 
-    let new_code = ass.assemble(code_addr as u64).unwrap();
+    let new_code = ass.assemble(call_ptr as u64).unwrap();
     assert_eq!(new_code.len(), 12);
-    let code_slice = unsafe { std::slice::from_raw_parts_mut(code_addr, 12) };
+    let code_slice = unsafe { std::slice::from_raw_parts_mut(call_ptr.cast_mut(), 12) };
     code_slice.copy_from_slice(&new_code);
 
     exec_ptr

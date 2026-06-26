@@ -56,7 +56,6 @@ fn finalize_ass(
     mut ass: CodeAssembler,
     branch_corrections: Vec<usize>,
     x86_idxs: &[usize],
-    epilogue_offset: u16,
 ) -> CompiledChunk {
     let mut instrs = ass.take_instructions();
     for instr_idx in branch_corrections {
@@ -92,6 +91,7 @@ fn finalize_ass(
     let target_slice =
         unsafe { std::slice::from_raw_parts_mut(target_addr, enc_result.code_buffer.len()) };
     target_slice.copy_from_slice(&enc_result.code_buffer);
+    exec_pool.current_alloc_utilization += enc_result.code_buffer.len();
 
     let mut instr_map = Vec::new();
     for arm_idx in 0..CHUNK_SIZE / 4 {
@@ -108,7 +108,6 @@ fn finalize_ass(
         instr_map,
         addr: target_addr,
         len: enc_result.code_buffer.len(),
-        epilogue_offset,
     }
 }
 
@@ -185,20 +184,9 @@ pub fn compile_chunk(exec_pool: &mut ExecPool, chunk_addr: usize) -> CompiledChu
         )
         .unwrap();
     }
-    let epilogue_offset = ass
-        .instructions()
-        .len()
-        .try_into()
-        .expect("epilogue offset overflow");
     make_call(&mut ass, callbacks::end_of_chunk as *const () as u64).unwrap();
 
-    let compiled_chunk = finalize_ass(
-        exec_pool,
-        ass,
-        branch_corrections,
-        &x86_idxs,
-        epilogue_offset,
-    );
+    let compiled_chunk = finalize_ass(exec_pool, ass, branch_corrections, &x86_idxs);
     dump::dump_translation(chunk_addr, &compiled_chunk);
     compiled_chunk
 }

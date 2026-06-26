@@ -60,7 +60,9 @@ pub extern "C" fn invalid_arm_instr() {
 landing_pad!(unimplemented_arm_instr_landing_pad, unimplemented_arm_instr);
 extern "C" fn unimplemented_arm_instr(_ctx: *mut ExecCtx, ret_ptr: *const u8) {
     eprintln!("todo: unimplemented arm instruction");
-    let arm_ptr = from_exec(ret_ptr).wrapping_sub(4);
+
+    // 12 is the length of the mov + call
+    let arm_ptr = from_exec(ret_ptr.wrapping_sub(12));
     let arm_code = unsafe { *(arm_ptr as *const u32) };
     eprintln!(
         "{:?}: {}",
@@ -74,7 +76,9 @@ extern "C" fn unimplemented_arm_instr(_ctx: *mut ExecCtx, ret_ptr: *const u8) {
 
 resumable_landing_pad!(rewrite_branch_landing_pad, rewrite_branch);
 extern "C" fn rewrite_branch(_ctx: *mut ExecCtx, ret_ptr: *const u8) -> u64 {
-    let arm_ptr = from_exec(ret_ptr).wrapping_sub(4);
+    // 12 is the length of the mov + call
+    let call_ptr = ret_ptr.wrapping_sub(12);
+    let arm_ptr = from_exec(call_ptr);
     let arm_code = unsafe { *(arm_ptr as *const u32) };
     let arm_instr = bad64::decode(arm_code, arm_ptr as u64).expect("failed to decode instr");
 
@@ -86,7 +90,7 @@ extern "C" fn rewrite_branch(_ctx: *mut ExecCtx, ret_ptr: *const u8) -> u64 {
         arm_instr
     );
 
-    branch::rewrite_branch(&arm_instr, ret_ptr) as u64
+    branch::rewrite_branch(&arm_instr, call_ptr) as u64
 }
 
 pub extern "C" fn end_of_chunk() {

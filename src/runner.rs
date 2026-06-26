@@ -19,8 +19,6 @@ struct CompiledChunk {
     instr_map: Vec<u16>,
     addr: *const u8,
     len: usize,
-    /// The offset of the final jump instruction in the compiled chunk.
-    epilogue_offset: u16,
 }
 
 #[derive(Default)]
@@ -85,10 +83,6 @@ pub fn from_exec(ptr: *const u8) -> *const u8 {
             // Start from the end of the chunk and work backwords until we find a matching offset or an offset that is
             // less than what we're looking for, which indicates that the arm instruction maps to multiple x86_64
             // instructions.
-            if chunk_offset >= chunk.epilogue_offset as usize {
-                // This address is just past the end of the chunk (which can happen when back mapping from return addresses)
-                return (chunk_arm_addr + CHUNK_SIZE) as *const u8;
-            }
             for (arm_offset, &offset) in chunk.instr_map.iter().enumerate().rev() {
                 if chunk_offset >= offset as usize {
                     return (chunk_arm_addr + arm_offset as usize * 4) as *const u8;
