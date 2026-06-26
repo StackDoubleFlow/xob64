@@ -94,7 +94,7 @@ fn make_rr_impl(
     match (dest, src) {
         (RegTranslation::Indirect(dest_indirect_idx), RegTranslation::Indirect(_)) => {
             if reads_dest {
-                load_indirect(ass, reg_class, dest_indirect_idx);
+                load_indirect(ass, reg_class, dest_indirect_idx)?;
             }
             let mut instr = Instruction::with1(r_rm, reg_class.scratch())?;
             src.set_operand(&mut instr, 1);
@@ -148,5 +148,11 @@ pub fn make_ri(
     let mut instr = Instruction::with2(code, Register::None, imm)?;
     reg.set_operand(&mut instr, 0);
     ass.add_instruction(instr)?;
+    Ok(())
+}
+
+pub fn make_call(ass: &mut CodeAssembler, target: u64) -> Result<(), iced_x86::IcedError> {
+    ass.mov(gpr64::rax, target)?;
+    ass.call(gpr64::rax)?;
     Ok(())
 }

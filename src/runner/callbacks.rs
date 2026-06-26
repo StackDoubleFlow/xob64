@@ -1,3 +1,4 @@
+use crate::runner::compiler::branch;
 use crate::runner::{ExecCtx, from_exec};
 
 macro_rules! landing_pad {
@@ -73,17 +74,19 @@ extern "C" fn unimplemented_arm_instr(_ctx: *mut ExecCtx, ret_ptr: *const u8) {
 
 resumable_landing_pad!(rewrite_branch_landing_pad, rewrite_branch);
 extern "C" fn rewrite_branch(_ctx: *mut ExecCtx, ret_ptr: *const u8) -> u64 {
-    eprintln!("todo: unimplemented arm instruction");
     let arm_ptr = from_exec(ret_ptr).wrapping_sub(4);
     let arm_code = unsafe { *(arm_ptr as *const u32) };
-    eprintln!(
-        "{:?}: {}",
+    let arm_instr = bad64::decode(arm_code, arm_ptr as u64).expect("failed to decode instr");
+
+    println!(
+        "rewriting branch at {:?}: {}",
         arm_ptr,
         // We should never fail to decode here since that an invalid instruction would have triggered the invalid_arm_instr callback.
         // If it does, it might indicate that the code has changed/currupted.
-        bad64::decode(arm_code, arm_ptr as u64).expect("failed to decode instr")
+        arm_instr
     );
-    std::process::abort();
+
+    branch::rewrite_branch(&arm_instr, ret_ptr) as u64
 }
 
 pub extern "C" fn end_of_chunk() {

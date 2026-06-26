@@ -1,5 +1,5 @@
 mod arith;
-mod branch;
+pub mod branch;
 mod dump;
 mod instr_utils;
 mod load_store;
@@ -7,11 +7,14 @@ mod pauth;
 mod register;
 
 use iced_x86::{
-    BlockEncoderOptions,
+    BlockEncoder, BlockEncoderOptions, BlockEncoderResult, Instruction, InstructionBlock,
     code_asm::{CodeAssembler, gpr64},
 };
 
-use crate::runner::{CHUNK_SIZE, CompiledChunk, EXECUTABLE_ALLOC_SIZE, ExecPool, callbacks};
+use crate::runner::{
+    CHUNK_SIZE, CompiledChunk, EXECUTABLE_ALLOC_SIZE, ExecPool, callbacks,
+    compiler::instr_utils::make_call,
+};
 
 fn alloc_new_region(exec_pool: &mut ExecPool) {
     if !exec_pool.current_alloc.is_null() {
@@ -38,36 +41,43 @@ fn alloc_new_region(exec_pool: &mut ExecPool) {
     exec_pool.current_alloc_utilization = 0;
 }
 
+fn assemble_instrs(instrs: &[Instruction], ip: u64) -> BlockEncoderResult {
+    let block = InstructionBlock::new(instrs, ip);
+    BlockEncoder::encode(
+        64,
+        block,
+        BlockEncoderOptions::RETURN_NEW_INSTRUCTION_OFFSETS,
+    )
+    .unwrap()
+}
+
 fn finalize_ass(
     exec_pool: &mut ExecPool,
     mut ass: CodeAssembler,
+    branch_corrections: Vec<usize>,
     x86_idxs: &[usize],
     epilogue_offset: u16,
 ) -> CompiledChunk {
+    let mut instrs = ass.take_instructions();
+    for instr_idx in branch_corrections {
+        let instr = &mut instrs[instr_idx];
+        let arm_idx = instr.memory_displacement64() as usize;
+        let label_id = x86_idxs[arm_idx] + 1;
+        instr.set_memory_displacement64(label_id as u64);
+    }
+
     if exec_pool.current_alloc.is_null() {
         alloc_new_region(exec_pool);
     }
 
     // FIXME: why does this take in &mut ass
-    let enc_result = ass
-        .assemble_options(
-            exec_pool.current_alloc as u64,
-            BlockEncoderOptions::RETURN_NEW_INSTRUCTION_OFFSETS,
-        )
-        .unwrap()
-        .inner;
-
+    let enc_result = assemble_instrs(&instrs, exec_pool.current_alloc as u64);
     // If this block exceeds the current allocation, allocate a new one and re-encode with the new rip.
     let enc_result = if enc_result.code_buffer.len() + exec_pool.current_alloc_utilization
         > EXECUTABLE_ALLOC_SIZE
     {
         alloc_new_region(exec_pool);
-        ass.assemble_options(
-            exec_pool.current_alloc as u64,
-            BlockEncoderOptions::RETURN_NEW_INSTRUCTION_OFFSETS,
-        )
-        .unwrap()
-        .inner
+        assemble_instrs(&instrs, exec_pool.current_alloc as u64)
     } else {
         enc_result
     };
@@ -102,15 +112,12 @@ fn finalize_ass(
     }
 }
 
-fn make_call(ass: &mut CodeAssembler, target: u64) -> Result<(), iced_x86::IcedError> {
-    ass.mov(gpr64::rax, target)?;
-    ass.call(gpr64::rax)?;
-    Ok(())
-}
-
 pub fn compile_instr(
+    exec_pool: &mut ExecPool,
     arm_instr: &Result<bad64::Instruction, bad64::DecodeError>,
     ass: &mut CodeAssembler,
+    branch_corrections: &mut Vec<usize>,
+    chunk_addr: usize,
 ) -> Result<(), iced_x86::IcedError> {
     let Ok(arm_instr) = arm_instr else {
         make_call(ass, callbacks::invalid_arm_instr as *const () as u64)?;
@@ -128,7 +135,7 @@ pub fn compile_instr(
     }
 
     // Branch instructions
-    if branch::compile_instr(arm_instr, ass)? {
+    if branch::compile_instr(arm_instr, ass, exec_pool, branch_corrections, chunk_addr)? {
         return Ok(());
     }
 
@@ -158,11 +165,25 @@ pub fn compile_chunk(exec_pool: &mut ExecPool, chunk_addr: usize) -> CompiledChu
     let arm_instrs = get_arm_chunk(chunk_addr);
 
     let mut ass = CodeAssembler::new(64).unwrap();
+    // Each label should have an id of instr index + 1
+    let mut ass_labels: Vec<_> = (0..CHUNK_SIZE / 4).map(|_| ass.create_label()).collect();
 
     let mut x86_idxs = Vec::new();
-    for arm_instr in arm_instrs {
+    let mut branch_corrections = Vec::new();
+    for (instr_idx, arm_instr) in arm_instrs.enumerate() {
+        ass.set_label(&mut ass_labels[instr_idx]).unwrap();
+        // TODO: what's the performance penalty of this?
+        ass.zero_bytes().unwrap();
+
         x86_idxs.push(ass.instructions().len());
-        compile_instr(&arm_instr, &mut ass).unwrap();
+        compile_instr(
+            exec_pool,
+            &arm_instr,
+            &mut ass,
+            &mut branch_corrections,
+            chunk_addr,
+        )
+        .unwrap();
     }
     let epilogue_offset = ass
         .instructions()
@@ -171,7 +192,13 @@ pub fn compile_chunk(exec_pool: &mut ExecPool, chunk_addr: usize) -> CompiledChu
         .expect("epilogue offset overflow");
     make_call(&mut ass, callbacks::end_of_chunk as *const () as u64).unwrap();
 
-    let compiled_chunk = finalize_ass(exec_pool, ass, &x86_idxs, epilogue_offset);
+    let compiled_chunk = finalize_ass(
+        exec_pool,
+        ass,
+        branch_corrections,
+        &x86_idxs,
+        epilogue_offset,
+    );
     dump::dump_translation(chunk_addr, &compiled_chunk);
     compiled_chunk
 }
