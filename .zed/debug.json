@@ -1,0 +1,35 @@
+// Project-local debug tasks
+//
+// For more documentation on how to configure debug tasks,
+// see: https://zed.dev/docs/debugger
+[
+  {
+    "adapter": "CodeLLDB",
+    "label": "debug hello_world",
+    "build": {
+      "label": "cargo run -p xob64",
+      "command": "cargo",
+      "args": ["build", "--package", "xob64"],
+      "env": {
+        "RUSTC_TOOLCHAIN": "/home/stack/.rustup/toolchains/stable-x86_64-unknown-linux-gnu",
+      },
+      "cwd": "/home/stack/ledump/xob64",
+      "use_new_terminal": false,
+      "allow_concurrent_runs": false,
+      "reveal": "always",
+      "reveal_target": "dock",
+      "hide": "never",
+      "tags": [],
+      "shell": "system",
+      "show_summary": false,
+      "show_command": false,
+      "save": "none",
+      "hooks": [],
+    },
+    "sourceLanguages": ["rust"],
+    "request": "launch",
+    "program": "$ZED_WORKTREE_ROOT/target/debug/xob64",
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "args": ["tests/binaries/hello_world"],
+  },
+]
