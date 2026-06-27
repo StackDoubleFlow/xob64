@@ -100,19 +100,23 @@ pub fn from_exec(ptr: *const u8) -> *const u8 {
 }
 
 #[repr(C)]
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct ExecCtx {
     indirect_regs: [u64; 18],
     indirect_fp_regs: [u128; 17],
+    // Used to pass info to a callback function
+    param: u64,
 }
 
 pub fn call(ptr: *const u8) {
     let exec_ptr = get_exec(ptr);
     println!("calling {:?} -> {:?}", ptr, exec_ptr);
     let mut ctx = ExecCtx::default();
+    let ctx_ptr = &mut ctx as *mut ExecCtx;
+    println!("ctx_ptr: {:?}", ctx_ptr);
     unsafe {
         std::arch::asm!(
-            "call {}", in(reg) exec_ptr, in("rax") &mut ctx, clobber_abi("C")
+            "call {}", in(reg) exec_ptr, in("r15") ctx_ptr, clobber_abi("C")
         )
     }
 }

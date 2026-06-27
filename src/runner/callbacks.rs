@@ -1,5 +1,5 @@
 use crate::runner::compiler::branch;
-use crate::runner::{ExecCtx, from_exec};
+use crate::runner::{ExecCtx, from_exec, get_exec};
 
 macro_rules! landing_pad {
     ($name:ident, $func:ident) => {
@@ -37,14 +37,14 @@ macro_rules! resumable_landing_pad {
                 "call {}",
                 // Also get rid of the return address
                 "add rsp, 72",
-                "mov rcx, [rsp - 8]",
-                "mov rdx, [rsp - 16]",
-                "mov rsi, [rsp - 24]",
-                "mov rdi, [rsp - 32]",
-                "mov r8, [rsp - 40]",
-                "mov r9, [rsp - 48]",
-                "mov r10, [rsp - 56]",
-                "mov r11, [rsp - 64]",
+                "mov rcx, [rsp - 16]",
+                "mov rdx, [rsp - 24]",
+                "mov rsi, [rsp - 32]",
+                "mov rdi, [rsp - 40]",
+                "mov r8, [rsp - 48]",
+                "mov r9, [rsp - 56]",
+                "mov r10, [rsp - 64]",
+                "mov r11, [rsp - 72]",
                 "jmp rax",
                 sym $func
             )
@@ -91,6 +91,16 @@ extern "C" fn rewrite_branch(_ctx: *mut ExecCtx, ret_ptr: *const u8) -> u64 {
     );
 
     branch::rewrite_branch(&arm_instr, call_ptr) as u64
+}
+
+resumable_landing_pad!(indirect_jump_landing_pad, indirect_jump);
+extern "C" fn indirect_jump(ctx: *mut ExecCtx, _ret_ptr: *const u8) -> u64 {
+    let ctx = unsafe { &*ctx };
+
+    eprintln!("indirect jump to {:x}", ctx.param);
+
+    let ret_addr = get_exec(ctx.param as *const u8);
+    ret_addr as u64
 }
 
 pub extern "C" fn end_of_chunk() {

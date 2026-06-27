@@ -4,7 +4,7 @@ use iced_x86::{
 };
 
 use crate::runner::{
-    CHUNK_SIZE, ExecPool, callbacks,
+    CHUNK_SIZE, ExecCtx, ExecPool, callbacks,
     compiler::{
         instr_utils::{IcedResult, label_target, make_call},
         register::{RegClass, translate_reg, unwrap_reg},
@@ -61,6 +61,38 @@ fn make_jump(
     Ok(())
 }
 
+fn handle_cbz_cbnz(
+    arm_instr: &bad64::Instruction,
+    ass: &mut CodeAssembler,
+    exec_pool: &mut ExecPool,
+    chunk_addr: usize,
+) -> Result<(), iced_x86::IcedError> {
+    let operands = arm_instr.operands();
+
+    let (reg_translation, reg_class) = translate_reg(unwrap_reg(operands[0]));
+    let cmp_code = match reg_class {
+        RegClass::GPR64 => Code::Cmp_rm64_imm8,
+        RegClass::GPR32 => Code::Cmp_rm32_imm8,
+        _ => unreachable!(),
+    };
+    let mut cmp = Instruction::with2(cmp_code, Register::None, 0u32)?;
+    reg_translation.set_operand(&mut cmp, 0);
+    ass.add_instruction(cmp)?;
+    let label = ass.fwd()?;
+    if arm_instr.op() == bad64::Op::CBZ {
+        ass.jne(label)?;
+    } else {
+        ass.jz(label)?;
+    }
+
+    make_jump(ass, operands[1], chunk_addr, exec_pool)?;
+
+    ass.anonymous_label()?;
+    ass.zero_bytes().unwrap();
+
+    Ok(())
+}
+
 // Returns true if the instruction was successfully translated.
 pub fn compile_instr(
     arm_instr: &bad64::Instruction,
@@ -75,32 +107,20 @@ pub fn compile_instr(
             make_jump(ass, operands[0], chunk_addr, exec_pool)?;
         }
         Op::BL => {
-            let label = ass.fwd()?;
-            ass.lea(gpr64::r11, ptr(label))?;
-
+            ass.mov(gpr64::r11, arm_instr.address() + 4)?;
             make_jump(ass, operands[0], chunk_addr, exec_pool)?;
-
-            // TODO: Maybe just re-use the label the next instruction should already have
-            ass.anonymous_label()?;
-            ass.zero_bytes().unwrap();
         }
-        Op::CBZ => {
-            let (reg_translation, reg_class) = translate_reg(unwrap_reg(operands[0]));
-            let cmp_code = match reg_class {
-                RegClass::GPR64 => Code::Cmp_rm64_imm8,
-                RegClass::GPR32 => Code::Cmp_rm32_imm8,
-                _ => unreachable!(),
-            };
-            let mut cmp = Instruction::with2(cmp_code, Register::None, 0u32)?;
-            reg_translation.set_operand(&mut cmp, 0);
-            ass.add_instruction(cmp)?;
-            let label = ass.fwd()?;
-            ass.jne(label)?;
-
-            make_jump(ass, operands[1], chunk_addr, exec_pool)?;
-
-            ass.anonymous_label()?;
-            ass.zero_bytes().unwrap();
+        Op::CBZ | Op::CBNZ => handle_cbz_cbnz(arm_instr, ass, exec_pool, chunk_addr)?,
+        Op::RET => {
+            ass.mov(
+                gpr64::r15 + std::mem::offset_of!(ExecCtx, param),
+                gpr64::r11,
+            )?;
+            ass.mov(
+                gpr64::rax,
+                callbacks::indirect_jump_landing_pad as *const u8 as u64,
+            )?;
+            ass.call(gpr64::rax)?;
         }
         _ => return Ok(false),
     }
