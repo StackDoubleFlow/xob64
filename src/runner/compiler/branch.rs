@@ -1,11 +1,14 @@
 use iced_x86::{
-    Code, Instruction,
+    Code, Instruction, Register,
     code_asm::{CodeAssembler, gpr64, ptr},
 };
 
 use crate::runner::{
     CHUNK_SIZE, ExecPool, callbacks,
-    compiler::instr_utils::{IcedResult, label_target, make_call},
+    compiler::{
+        instr_utils::{IcedResult, label_target, make_call},
+        register::{RegClass, translate_reg, unwrap_reg},
+    },
     get_exec,
 };
 
@@ -66,17 +69,36 @@ pub fn compile_instr(
     chunk_addr: usize,
 ) -> Result<bool, iced_x86::IcedError> {
     use bad64::Op;
+    let operands = arm_instr.operands();
     match arm_instr.op() {
         Op::B => {
-            make_jump(ass, arm_instr.operands()[0], chunk_addr, exec_pool)?;
+            make_jump(ass, operands[0], chunk_addr, exec_pool)?;
         }
         Op::BL => {
             let label = ass.fwd()?;
             ass.lea(gpr64::r11, ptr(label))?;
 
-            make_jump(ass, arm_instr.operands()[0], chunk_addr, exec_pool)?;
+            make_jump(ass, operands[0], chunk_addr, exec_pool)?;
 
             // TODO: Maybe just re-use the label the next instruction should already have
+            ass.anonymous_label()?;
+            ass.zero_bytes().unwrap();
+        }
+        Op::CBZ => {
+            let (reg_translation, reg_class) = translate_reg(unwrap_reg(operands[0]));
+            let cmp_code = match reg_class {
+                RegClass::GPR64 => Code::Cmp_rm64_imm8,
+                RegClass::GPR32 => Code::Cmp_rm32_imm8,
+                _ => unreachable!(),
+            };
+            let mut cmp = Instruction::with2(cmp_code, Register::None, 0u32)?;
+            reg_translation.set_operand(&mut cmp, 0);
+            ass.add_instruction(cmp)?;
+            let label = ass.fwd()?;
+            ass.jne(label)?;
+
+            make_jump(ass, operands[1], chunk_addr, exec_pool)?;
+
             ass.anonymous_label()?;
             ass.zero_bytes().unwrap();
         }

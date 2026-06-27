@@ -1,12 +1,7 @@
 mod loader;
 mod runner;
 
-use std::{
-    env,
-    sync::{Arc, LazyLock, Mutex, OnceLock},
-};
-
-use object::read::elf::ElfFile64;
+use std::env;
 
 fn main() {
     let mut args = env::args().skip(1);
