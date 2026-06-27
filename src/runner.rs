@@ -32,6 +32,15 @@ struct ExecPool {
     current_alloc_utilization: usize,
 }
 
+impl ExecPool {
+    pub fn is_executable(&self, ptr: *const u8) -> bool {
+        let addr = ptr as usize;
+        self.exec_ranges
+            .iter()
+            .any(|r| r.start as usize <= addr && addr < r.end as usize)
+    }
+}
+
 unsafe impl Send for ExecPool {}
 
 static EXEC_POOL: LazyLock<Arc<Mutex<ExecPool>>> =
@@ -50,6 +59,11 @@ pub fn define_exec_range(start: *const u8, end: *const u8) {
 /// Translates the ARM64 code address to the translated x86_64 executable address
 pub fn get_exec(ptr: *const u8) -> *const u8 {
     let mut exec_pool = EXEC_POOL.lock().unwrap();
+
+    // First, check to see if it's an emulated ARM64 executable address. If not, return the original pointer.
+    if !exec_pool.is_executable(ptr) {
+        return ptr;
+    }
 
     let addr = ptr as usize;
     let chunk_offset = addr % CHUNK_SIZE;
@@ -116,7 +130,23 @@ pub fn call(ptr: *const u8) {
     println!("ctx_ptr: {:?}", ctx_ptr);
     unsafe {
         std::arch::asm!(
-            "call {}", in(reg) exec_ptr, in("r15") ctx_ptr, clobber_abi("C")
+            // Load emulation context register.
+            // r15 is callee-saved so we need to preserve it.
+            "sub rsp, 16",
+            "mov [rsp], r15",
+            "mov r15, r11",
+            // Load link register
+            "lea r11, [rip + 2f]",
+            "jmp {}",
+            // Restore r15 from the stack.
+            "2: mov r15, [rsp]",
+            "add rsp, 16",
+            in(reg) exec_ptr,
+            // r11 is an arbitrary caller-saved register (not related to the emulation context)
+            in("r11") ctx_ptr,
+            clobber_abi("C")
         )
     }
+    println!("returned from call");
+    panic!();
 }

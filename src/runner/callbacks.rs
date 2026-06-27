@@ -33,10 +33,11 @@ macro_rules! resumable_landing_pad {
                 "mov [rsp - 64], r11",
                 "mov rdi, r15",
                 "mov rsi, [rsp]",
-                "sub rsp, 64",
+                // The extra 8 bytes are to align the stack to 16 bytes
+                "sub rsp, 72",
                 "call {}",
                 // Also get rid of the return address
-                "add rsp, 72",
+                "add rsp, 80",
                 "mov rcx, [rsp - 16]",
                 "mov rdx, [rsp - 24]",
                 "mov rsi, [rsp - 32]",
@@ -97,9 +98,9 @@ resumable_landing_pad!(indirect_jump_landing_pad, indirect_jump);
 extern "C" fn indirect_jump(ctx: *mut ExecCtx, _ret_ptr: *const u8) -> u64 {
     let ctx = unsafe { &*ctx };
 
-    eprintln!("indirect jump to {:x}", ctx.param);
-
     let ret_addr = get_exec(ctx.param as *const u8);
+
+    println!("indirect jump to {:x} -> {:x}", ctx.param, ret_addr as u64);
     ret_addr as u64
 }
 

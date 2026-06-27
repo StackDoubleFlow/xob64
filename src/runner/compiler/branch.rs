@@ -116,11 +116,10 @@ pub fn compile_instr(
                 gpr64::r15 + std::mem::offset_of!(ExecCtx, param),
                 gpr64::r11,
             )?;
-            ass.mov(
-                gpr64::rax,
+            make_call(
+                ass,
                 callbacks::indirect_jump_landing_pad as *const u8 as u64,
             )?;
-            ass.call(gpr64::rax)?;
         }
         _ => return Ok(false),
     }
