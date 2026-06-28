@@ -1,7 +1,9 @@
-use iced_x86::code_asm::CodeAssembler;
+use iced_x86::{Code, Instruction, MemoryOperand, Register, code_asm::CodeAssembler};
 
 use crate::runner::compiler::{
-    instr_utils::{codes::MOV_RI_CODES, label_target, make_mov_ri64, make_mov_rr, make_ri},
+    instr_utils::{
+        IcedResult, codes::MOV_RI_CODES, label_target, make_mov_ri64, make_mov_rr, make_ri,
+    },
     register::{RegClass, translate_reg, unwrap_reg},
 };
 
@@ -51,14 +53,59 @@ use crate::runner::compiler::{
 // mov [r15 + dest_offset], rax; Transfer to indirect dest
 // ```
 
+fn translate_add_sub(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) -> IcedResult<bool> {
+    let operands = arm_instr.operands();
+    let (dest_translation, reg_class) = translate_reg(unwrap_reg(operands[0]));
+    let (src1_translation, _) = translate_reg(unwrap_reg(operands[1]));
+    let lea_code = match reg_class {
+        RegClass::GPR64 => Code::Lea_r64_m,
+        RegClass::GPR32 => Code::Lea_r32_m,
+        _ => todo!(),
+    };
+    let mut lea = Instruction::with2(
+        lea_code,
+        Register::None,
+        MemoryOperand::with_base(Register::None),
+    )?;
+    dest_translation.set_reg_operand(&mut lea, 0, reg_class);
+    src1_translation.set_memory_base(&mut lea, reg_class);
+    match operands[2] {
+        bad64::Operand::Reg { reg, .. } => {
+            let (src2_translation, _) = translate_reg(reg);
+            if src1_translation.is_indirect() && src2_translation.is_indirect() {
+                return Ok(false);
+            } else {
+                src2_translation.set_memory_index(&mut lea, reg_class);
+                src1_translation.pre_read(ass, reg_class)?;
+                src2_translation.pre_read(ass, reg_class)?;
+                ass.add_instruction(lea)?;
+                dest_translation.post_write(ass, reg_class)?;
+            }
+        }
+        bad64::Operand::Imm64 {
+            imm: bad64::Imm::Unsigned(imm),
+            shift,
+        } => {
+            if shift.is_some() {
+                return Ok(false);
+            }
+            lea.set_memory_displ_size(8);
+            lea.set_memory_displacement64(imm as u64);
+            src1_translation.pre_read(ass, reg_class)?;
+            ass.add_instruction(lea)?;
+            dest_translation.post_write(ass, reg_class)?;
+        }
+        _ => return Ok(false),
+    }
+    Ok(true)
+}
+
 // Returns true if the instruction was successfully translated.
-pub fn compile_instr(
-    arm_instr: &bad64::Instruction,
-    ass: &mut CodeAssembler,
-) -> Result<bool, iced_x86::IcedError> {
+pub fn compile_instr(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) -> IcedResult<bool> {
     use bad64::Op;
     let operands = arm_instr.operands();
     match arm_instr.op() {
+        Op::NOP => ass.nop()?,
         Op::MOV => {
             let dest = unwrap_reg(operands[0]);
             let (dest_translation, reg_class) = translate_reg(dest);
@@ -86,6 +133,7 @@ pub fn compile_instr(
             let addr = label_target(operands[1]);
             make_mov_ri64(ass, dest_translation, addr as i64)?;
         }
+        Op::ADD => return translate_add_sub(arm_instr, ass),
         // Op::ORR => {
 
         //     let operands = arm_instr.operands();

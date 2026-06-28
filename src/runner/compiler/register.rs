@@ -70,15 +70,29 @@ impl RegTranslation {
         }
     }
 
+    fn reg_operand(&self, reg_class: RegClass) -> Register {
+        match self {
+            RegTranslation::Direct(reg) => *reg,
+            RegTranslation::Indirect(_) => reg_class.scratch(),
+        }
+    }
+
     /// Use this when memory operand is not possible, otherwise use `set_operand`.
     /// If `is_write`, then `post_write` must be called, otherwise `pre_read` must be called.
     pub fn set_reg_operand(self, instr: &mut Instruction, idx: u32, reg_class: RegClass) {
         instr.set_op_kind(idx, OpKind::Register);
-        let reg = match self {
-            RegTranslation::Direct(reg) => reg,
-            RegTranslation::Indirect(_) => reg_class.scratch(),
-        };
+        let reg = self.reg_operand(reg_class);
         instr.set_op_register(idx, reg);
+    }
+
+    /// Make sure to use `pre_read`
+    pub fn set_memory_base(self, instr: &mut Instruction, reg_class: RegClass) {
+        instr.set_memory_base(self.reg_operand(reg_class));
+    }
+
+    /// Make sure to use `pre_read`
+    pub fn set_memory_index(self, instr: &mut Instruction, reg_class: RegClass) {
+        instr.set_memory_index(self.reg_operand(reg_class));
     }
 
     pub fn post_write(self, ass: &mut CodeAssembler, reg_class: RegClass) -> IcedResult<()> {
