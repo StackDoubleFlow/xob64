@@ -8,6 +8,7 @@ macro_rules! landing_pad {
             std::arch::naked_asm!(
                 "mov rdi, r15",
                 "mov rsi, [rsp]",
+                "sub rsp, 8",
                 "call {}",
                 sym $func
             )
