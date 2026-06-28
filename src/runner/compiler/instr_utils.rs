@@ -18,13 +18,16 @@ pub mod codes {
     pub const ADD_RR_CODES: OpRRCodes =
         OpRRCodes::new(Add_r32_rm32, Add_rm32_r32, Add_r64_rm64, Add_rm64_r64);
     pub const ADD_RI_CODES: OpRICodes = OpRICodes::new(Add_rm32_imm32, Add_rm64_imm32);
+
+    pub const SUB_RR_CODES: OpRRCodes =
+        OpRRCodes::new(Sub_r32_rm32, Sub_rm32_r32, Sub_r64_rm64, Sub_rm64_r64);
 }
 
 pub struct OpRRCodes {
-    r32_rm32: Code,
-    rm32_r32: Code,
-    r64_rm64: Code,
-    rm64_r64: Code,
+    pub r32_rm32: Code,
+    pub rm32_r32: Code,
+    pub r64_rm64: Code,
+    pub rm64_r64: Code,
 }
 
 impl OpRRCodes {
@@ -39,8 +42,8 @@ impl OpRRCodes {
 }
 
 pub struct OpRICodes {
-    rm32_imm32: Code,
-    rm64_imm32: Code,
+    pub rm32_imm32: Code,
+    pub rm64_imm32: Code,
 }
 
 impl OpRICodes {
@@ -95,14 +98,15 @@ fn make_rr_impl(
         _ => unimplemented!(),
     };
     match (dest, src) {
-        (RegTranslation::Indirect(dest_indirect_idx), RegTranslation::Indirect(_)) => {
+        (RegTranslation::Indirect(_), RegTranslation::Indirect(_)) => {
             if reads_dest {
-                load_indirect(ass, reg_class, dest_indirect_idx)?;
+                dest.pre_read(ass, reg_class)?;
             }
-            let mut instr = Instruction::with1(r_rm, reg_class.scratch())?;
+            let mut instr = Instruction::with2(r_rm, reg_class.scratch(), Register::None)?;
+            dest.set_reg_operand(&mut instr, 0, reg_class);
             src.set_operand(&mut instr, 1);
             ass.add_instruction(instr)?;
-            store_indirect(ass, reg_class, dest_indirect_idx)?;
+            dest.post_write(ass, reg_class)?;
         }
         _ => {
             let code = if src.is_indirect() { r_rm } else { rm_r };
