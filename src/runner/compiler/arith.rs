@@ -188,6 +188,58 @@ fn translate_add_sub(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) ->
     Ok(true)
 }
 
+fn translate_shift(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) -> IcedResult<()> {
+    let operands = arm_instr.operands();
+    let (dest_translation, reg_class) = translate_reg(unwrap_reg(operands[0]));
+    let (src1_translation, _) = translate_reg(unwrap_reg(operands[1]));
+
+    let (r32_rm32_r32, r64_rm64_r32) = match arm_instr.op() {
+        bad64::Op::ASR => (Code::VEX_Sarx_r32_rm32_r32, Code::VEX_Sarx_r64_rm64_r64),
+        bad64::Op::LSL => (Code::VEX_Shlx_r32_rm32_r32, Code::VEX_Shlx_r64_rm64_r64),
+        bad64::Op::LSR => (Code::VEX_Shrx_r32_rm32_r32, Code::VEX_Shrx_r64_rm64_r64),
+        _ => unreachable!(),
+    };
+
+    // FIXME: these affect flags
+    let (rm32_i, rm64_i) = match arm_instr.op() {
+        bad64::Op::ASR => (Code::Sar_rm32_imm8, Code::Sar_rm64_imm8),
+        bad64::Op::LSL => (Code::Shl_rm32_imm8, Code::Shl_rm64_imm8),
+        bad64::Op::LSR => (Code::Shr_rm32_imm8, Code::Shr_rm64_imm8),
+        _ => unreachable!(),
+    };
+
+    let (r_rm_r, rm_i) = match reg_class {
+        RegClass::GPR64 => (r64_rm64_r32, rm64_i),
+        RegClass::GPR32 => (r32_rm32_r32, rm32_i),
+        _ => unreachable!(),
+    };
+
+    match operands[2] {
+        bad64::Operand::Reg { reg, .. } => {
+            let (src2_translation, _) = translate_reg(reg);
+            src2_translation.pre_read(ass, reg_class)?;
+            let mut shift_inst =
+                Instruction::with3(r_rm_r, Register::None, Register::None, Register::None)?;
+            dest_translation.set_reg_operand(&mut shift_inst, 0, reg_class);
+            src1_translation.set_operand(&mut shift_inst, 1);
+            src2_translation.set_reg_operand(&mut shift_inst, 2, reg_class);
+            ass.add_instruction(shift_inst)?;
+            dest_translation.post_write(ass, reg_class)?;
+        }
+        bad64::Operand::Imm64 {
+            imm: bad64::Imm::Unsigned(imm),
+            ..
+        } => {
+            let mut shift_inst = Instruction::with2(rm_i, Register::None, imm as i32)?;
+            dest_translation.set_operand(&mut shift_inst, 0);
+            ass.add_instruction(shift_inst)?;
+        }
+        _ => unreachable!(),
+    }
+
+    Ok(())
+}
+
 // Returns true if the instruction was successfully translated.
 pub fn compile_instr(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) -> IcedResult<bool> {
     use bad64::Op;
@@ -222,6 +274,7 @@ pub fn compile_instr(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) ->
             make_mov_ri64(ass, dest_translation, addr as i64)?;
         }
         Op::ADD | Op::SUB => return translate_add_sub(arm_instr, ass),
+        Op::ASR | Op::LSR | Op::LSL => translate_shift(arm_instr, ass)?,
         _ => return Ok(false),
     }
 

@@ -17,7 +17,7 @@ pub mod codes {
 
     pub const ADD_RR_CODES: OpRRCodes =
         OpRRCodes::new(Add_r32_rm32, Add_rm32_r32, Add_r64_rm64, Add_rm64_r64);
-    pub const ADD_RI_CODES: OpRICodes = OpRICodes::new(Add_rm32_imm32, Add_rm64_imm32);
+    // pub const ADD_RI_CODES: OpRICodes = OpRICodes::new(Add_rm32_imm32, Add_rm64_imm32);
 
     pub const SUB_RR_CODES: OpRRCodes =
         OpRRCodes::new(Sub_r32_rm32, Sub_rm32_r32, Sub_r64_rm64, Sub_rm64_r64);
