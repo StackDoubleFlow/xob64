@@ -40,13 +40,14 @@ impl SymbolTable {}
 static OBJECT_POOL: LazyLock<Arc<Mutex<ObjectPool>>> =
     LazyLock::new(|| Arc::new(Mutex::new(ObjectPool::default())));
 
-fn align_to_next_page(addr: usize) -> usize {
-    (addr + *PAGE_SIZE - 1) & !(*PAGE_SIZE - 1)
+fn align_to_next(addr: usize, alignment: usize) -> usize {
+    (addr + alignment - 1) & !(alignment - 1)
 }
 
 unsafe fn load_segment(segment: ElfSegment64, fd: i32, base_addr: *const u8) {
+    let alignment = (segment.align() as usize).max(*PAGE_SIZE);
     let addr = unsafe { base_addr.add(segment.address() as usize) };
-    let page_offset = addr as usize % *PAGE_SIZE;
+    let page_offset = addr as usize % alignment;
     let aligned_addr = unsafe { addr.offset(-(page_offset as isize)) };
     let aligned_size = page_offset + segment.size() as usize;
 
@@ -87,13 +88,16 @@ unsafe fn load_segment(segment: ElfSegment64, fd: i32, base_addr: *const u8) {
         unsafe {
             nix::libc::perror(c"mmap failed".as_ptr());
         }
-        panic!("mapping failed");
+        panic!(
+            "mapping failed: {:?} ({}), offset: {}",
+            aligned_addr, aligned_size, map_offset
+        );
     }
 
     println!("mapping successful: {:?}", mapped_addr);
 
     let segment_end = mapped_addr as usize + aligned_size;
-    let mapping_end = align_to_next_page(segment_end);
+    let mapping_end = align_to_next(segment_end, *PAGE_SIZE);
     // If the file mapping ends before the segment does, then we need to zero out the rest
     if segment.size() > file_size {
         let file_load_end = mapped_addr as usize + page_offset + file_size as usize;
@@ -114,14 +118,20 @@ unsafe fn load_segment(segment: ElfSegment64, fd: i32, base_addr: *const u8) {
 }
 
 fn generate_suitable_base_addr(elf: &ElfFile64) -> *const u8 {
+    let base_alignment = (elf
+        .segments()
+        .find(|segment| segment.address() == 0)
+        .expect("could not find base segment for alignment")
+        .align() as usize)
+        .max(*PAGE_SIZE);
     let unaligned_end = elf
         .segments()
         .map(|segment| segment.address() + segment.size())
         .max()
         .unwrap_or(0);
-    let end = align_to_next_page(unaligned_end as usize);
+    let end = align_to_next(unaligned_end as usize, *PAGE_SIZE) + base_alignment - *PAGE_SIZE;
 
-    let base_addr = unsafe {
+    let mapped_addr = unsafe {
         nix::libc::mmap(
             std::ptr::null_mut(),
             end,
@@ -132,10 +142,18 @@ fn generate_suitable_base_addr(elf: &ElfFile64) -> *const u8 {
         )
     };
 
-    unsafe {
-        nix::libc::munmap(base_addr, end);
+    if mapped_addr as isize == -1 {
+        unsafe {
+            nix::libc::perror(c"mmap failed".as_ptr());
+        }
+        panic!("mapping failed");
     }
 
+    unsafe {
+        nix::libc::munmap(mapped_addr, end);
+    }
+
+    let base_addr = align_to_next(mapped_addr as usize, base_alignment);
     base_addr as *const u8
 }
 
@@ -151,7 +169,7 @@ fn resolve_relocations(elf: &ElfFile64, base_addr: *mut u8, symbol_table: &Symbo
         };
         match ty {
             elf::R_AARCH64_RELATIVE => {
-                let value = base_addr as u64 + (addr as i64 + reloc.addend()) as u64;
+                let value = base_addr as u64 + reloc.addend() as u64;
                 write_u64(addr, value);
             }
             elf::R_AARCH64_GLOB_DAT => {

@@ -148,5 +148,4 @@ pub fn call(ptr: *const u8) {
         )
     }
     println!("returned from call");
-    panic!();
 }
