@@ -3,7 +3,7 @@ use iced_x86::{Code, Instruction, MemoryOperand, Register, code_asm::CodeAssembl
 use crate::runner::compiler::{
     instr_utils::{
         IcedResult, OpRICodes, OpRRCodes,
-        codes::{ADD_RR_CODES, MOV_RI_CODES, SUB_RR_CODES},
+        codes::{ADD_RR_CODES, MOV_RI_CODES, SUB_RI_CODES, SUB_RR_CODES},
         label_target, make_mov_ri64, make_mov_rr, make_ri, make_rr,
     },
     register::{RegClass, RegTranslation, translate_reg, unwrap_reg},
@@ -165,11 +165,23 @@ fn translate_add_sub(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) ->
             if shift.is_some() {
                 return Ok(false);
             }
-            lea.set_memory_displ_size(8);
-            lea.set_memory_displacement64(imm as u64);
-            src1_translation.pre_read(ass, reg_class)?;
-            ass.add_instruction(lea)?;
-            dest_translation.post_write(ass, reg_class)?;
+            if arm_instr.op() == bad64::Op::SUB {
+                // We can't use lea for sub
+                make_rri(
+                    ass,
+                    &SUB_RI_CODES,
+                    dest_translation,
+                    src1_translation,
+                    imm as i32,
+                    reg_class,
+                )?;
+            } else {
+                lea.set_memory_displ_size(8);
+                lea.set_memory_displacement64(imm as u64);
+                src1_translation.pre_read(ass, reg_class)?;
+                ass.add_instruction(lea)?;
+                dest_translation.post_write(ass, reg_class)?;
+            }
         }
         _ => return Ok(false),
     }
@@ -210,17 +222,6 @@ pub fn compile_instr(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) ->
             make_mov_ri64(ass, dest_translation, addr as i64)?;
         }
         Op::ADD | Op::SUB => return translate_add_sub(arm_instr, ass),
-        // Op::ORR => {
-
-        //     let operands = arm_instr.operands();
-        //     let dest = unwrap_reg(operands[0]);
-        //     let src1 = unwrap_reg(operands[1]);
-
-        //     if dest != src1 {
-        //         move_to_dest(ass, dest, src1)?;
-        //     }
-        //     todo!();
-        // }
         _ => return Ok(false),
     }
 

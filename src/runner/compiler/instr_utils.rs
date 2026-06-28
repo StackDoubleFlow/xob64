@@ -21,6 +21,7 @@ pub mod codes {
 
     pub const SUB_RR_CODES: OpRRCodes =
         OpRRCodes::new(Sub_r32_rm32, Sub_rm32_r32, Sub_r64_rm64, Sub_rm64_r64);
+    pub const SUB_RI_CODES: OpRICodes = OpRICodes::new(Sub_rm32_imm32, Sub_rm64_imm32);
 }
 
 pub struct OpRRCodes {
