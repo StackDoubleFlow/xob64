@@ -9,4 +9,6 @@ fn main() {
     let exec_args: Vec<String> = args.collect();
 
     loader::load_object(&exec_name);
+    let start_sym = loader::get_symbol(c"_start").expect("could not find _start symbol");
+    runner::call(start_sym);
 }

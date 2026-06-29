@@ -1,6 +1,6 @@
 use iced_x86::{
     Code, Instruction, Register,
-    code_asm::{CodeAssembler, gpr64, ptr},
+    code_asm::{CodeAssembler, gpr64},
 };
 
 use crate::runner::{
@@ -121,6 +121,8 @@ pub fn compile_instr(
                 callbacks::indirect_jump_landing_pad as *const u8 as u64,
             )?;
         }
+        // Branch Target Identification
+        Op::BTI => {}
         _ => return Ok(false),
     }
 

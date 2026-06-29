@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    ffi::CString,
+    ffi::{CStr, CString},
     fs::{self, File},
     os::fd::AsRawFd,
     sync::{Arc, LazyLock, Mutex},
@@ -8,7 +8,7 @@ use std::{
 
 use object::{
     Object, ObjectSegment, ObjectSymbol, ObjectSymbolTable, RelocationFlags, RelocationTarget, elf,
-    read::elf::{ElfFile64, ElfSegment64},
+    read::elf::{ElfFile64, ElfSegment64, Sym},
 };
 
 use crate::runner;
@@ -32,10 +32,8 @@ struct EmuObject {
 
 #[derive(Default)]
 struct SymbolTable {
-    global_symbols: HashMap<String, *const u8>,
+    global_symbols: HashMap<CString, *const u8>,
 }
-
-impl SymbolTable {}
 
 static OBJECT_POOL: LazyLock<Arc<Mutex<ObjectPool>>> =
     LazyLock::new(|| Arc::new(Mutex::new(ObjectPool::default())));
@@ -185,11 +183,12 @@ fn resolve_relocations(elf: &ElfFile64, base_addr: *mut u8, symbol_table: &Symbo
                 if symbol.is_weak() {
                     continue;
                 }
-                let name = symbol.name().unwrap();
-                if let Some(&value) = symbol_table.global_symbols.get(name) {
+                let name_bytes = symbol.name_bytes().unwrap();
+                let name = CString::new(name_bytes).unwrap();
+                if let Some(&value) = symbol_table.global_symbols.get(&name) {
                     write_u64(addr, value as u64);
                 } else {
-                    unimplemented!("GOT symbol lookup: {}", name);
+                    unimplemented!("GOT symbol lookup: {:?}", name);
                 }
             }
             elf::R_AARCH64_JUMP_SLOT => {
@@ -205,11 +204,12 @@ fn resolve_relocations(elf: &ElfFile64, base_addr: *mut u8, symbol_table: &Symbo
                 if symbol.is_weak() {
                     continue;
                 }
-                let name = symbol.name().unwrap();
-                if let Some(&value) = symbol_table.global_symbols.get(name) {
+                let name_bytes = symbol.name_bytes().unwrap();
+                let name = CString::new(name_bytes).unwrap();
+                if let Some(&value) = symbol_table.global_symbols.get(&name) {
                     write_u64(addr, value as u64);
                 } else {
-                    unimplemented!("PLT symbol lookup: {}", name);
+                    unimplemented!("PLT symbol lookup: {:?}", name);
                 }
             }
             _ => {
@@ -219,27 +219,26 @@ fn resolve_relocations(elf: &ElfFile64, base_addr: *mut u8, symbol_table: &Symbo
     }
 }
 
-fn get_dlsym(name: &str) -> *const u8 {
-    let name_c_str = CString::new(name).unwrap();
+fn get_dlsym(name: &CStr) -> *const u8 {
     unsafe {
         let handle = nix::libc::dlopen(std::ptr::null(), nix::libc::RTLD_LAZY);
-        nix::libc::dlsym(handle, name_c_str.as_ptr()) as *const u8
+        nix::libc::dlsym(handle, name.as_ptr()) as *const u8
     }
 }
 
 // Returns true if succeeded
 fn try_load_wrapped(name: &str, symbol_table: &mut SymbolTable) -> bool {
     if name.starts_with("libc.so") {
-        let names = ["abort", "puts"];
+        let names = [c"abort", c"puts"];
         for name in names {
             symbol_table
                 .global_symbols
-                .insert(name.to_string(), get_dlsym(name));
+                .insert(name.to_owned(), get_dlsym(name));
         }
         // TODO
         symbol_table
             .global_symbols
-            .insert("__libc_start_main".to_string(), std::ptr::null());
+            .insert(c"__libc_start_main".to_owned(), std::ptr::null());
         true
     } else {
         false
@@ -335,6 +334,27 @@ pub fn load_object(name: &str) -> usize {
         fini_array,
     });
 
+    for symbol in elf.elf_symbol_table().symbols() {
+        let shndx = symbol.st_shndx(elf.endianness());
+        let bind = symbol.st_bind();
+        let other = symbol.st_other();
+        if shndx != elf::SHN_UNDEF
+            && (bind == elf::STB_GLOBAL || bind == elf::STB_WEAK)
+            && other == elf::STV_DEFAULT
+        {
+            let name_bytes = symbol
+                .name(elf.endianness(), elf.elf_symbol_table().strings())
+                .unwrap();
+            let name = CString::new(name_bytes.to_vec()).unwrap();
+            let addr = symbol.st_value(elf.endianness()) as usize;
+
+            object_pool
+                .symbol_table
+                .global_symbols
+                .insert(name, unsafe { base_addr.add(addr) });
+        }
+    }
+
     // Release the lock
     drop(object_pool);
 
@@ -343,4 +363,10 @@ pub fn load_object(name: &str) -> usize {
     }
 
     idx
+}
+
+pub fn get_symbol(name: &CStr) -> Option<*const u8> {
+    let object_pool = OBJECT_POOL.lock().unwrap();
+    dbg!(&object_pool.symbol_table.global_symbols);
+    object_pool.symbol_table.global_symbols.get(name).cloned()
 }

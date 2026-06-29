@@ -51,7 +51,7 @@ use crate::runner::compiler::{
 //
 // From there, this is the absolute worst case:
 // ```
-// mov rax, [r15 + dest_offset] ; Load indirect src1
+// mov rax, [r15 + src1_offset] ; Load indirect src1
 // or rax, [r15 + src2_offset] ; Perform operation on scratch with src2
 // mov [r15 + dest_offset], rax; Transfer to indirect dest
 // ```
