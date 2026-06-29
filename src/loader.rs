@@ -1,8 +1,8 @@
 use std::{
     collections::HashMap,
-    ffi::{CStr, CString},
+    ffi::{CStr, CString, OsStr},
     fs::{self, File},
-    os::fd::AsRawFd,
+    os::{fd::AsRawFd, unix::ffi::OsStrExt},
     sync::{Arc, LazyLock, Mutex},
 };
 
@@ -293,7 +293,8 @@ fn collect_init_fini(elf: &ElfFile64, base_ptr: *const u8) -> (Vec<*const u8>, V
     (init_array, fini_array)
 }
 
-pub fn load_object(name: &str) -> usize {
+pub fn load_object(name: &CStr) -> usize {
+    let name = OsStr::from_bytes(name.to_bytes());
     let mut object_pool = OBJECT_POOL.lock().unwrap();
 
     // Parse ELF
