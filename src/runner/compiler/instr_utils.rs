@@ -179,3 +179,30 @@ pub fn label_target(label_operand: bad64::Operand) -> usize {
         _ => unreachable!(),
     }
 }
+
+pub fn get_shamt_from_shift(shift: bad64::Shift) -> u32 {
+    match shift {
+        bad64::Shift::LSL(shamt)
+        | bad64::Shift::LSR(shamt)
+        | bad64::Shift::ASR(shamt)
+        | bad64::Shift::ROR(shamt)
+        | bad64::Shift::MSL(shamt)
+        | bad64::Shift::UXTB(shamt)
+        | bad64::Shift::UXTH(shamt)
+        | bad64::Shift::UXTW(shamt)
+        | bad64::Shift::UXTX(shamt)
+        | bad64::Shift::SXTB(shamt)
+        | bad64::Shift::SXTH(shamt)
+        | bad64::Shift::SXTW(shamt)
+        | bad64::Shift::SXTX(shamt) => shamt as u32,
+    }
+}
+
+pub fn get_alt_reg(blockers: &[RegTranslation]) -> Register {
+    for reg in [Register::R10, Register::R9, Register::R14] {
+        if !blockers.iter().any(|b| *b == RegTranslation::Direct(reg)) {
+            return reg;
+        }
+    }
+    unreachable!()
+}

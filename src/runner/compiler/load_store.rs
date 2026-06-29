@@ -1,7 +1,7 @@
 use iced_x86::{Code, Instruction, MemoryOperand, Register, code_asm::CodeAssembler};
 
 use crate::runner::compiler::{
-    instr_utils::load_indirect,
+    instr_utils::{get_alt_reg, load_indirect},
     register::{RegClass, RegTranslation, translate_reg, unwrap_reg},
 };
 
@@ -33,7 +33,7 @@ fn process_addr_mode(
     ass: &mut CodeAssembler,
     mem_operand: bad64::Operand,
     alternate_indirect: bool,
-    is_alt_available: impl Fn(Register) -> bool,
+    alt_blockers: &[RegTranslation],
 ) -> Result<AddrModeInfo, iced_x86::IcedError> {
     let (base_reg, imm) = match mem_operand {
         bad64::Operand::MemOffset { reg, offset, .. } => (reg, offset),
@@ -51,13 +51,7 @@ fn process_addr_mode(
             if alternate_indirect {
                 // We have a situation where both the offset and store value are indirect.
                 // We need to load the offset into a register that isn't the scratch, and we need to pick a register that isn't going to be the load/store value of either reg1 or reg2.
-                let alt_reg = if is_alt_available(Register::R10) {
-                    Register::R10
-                } else if is_alt_available(Register::R9) {
-                    Register::R9
-                } else {
-                    Register::R14
-                };
+                let alt_reg = get_alt_reg(alt_blockers);
                 ass.add_instruction(Instruction::with1(Code::Push_r64, alt_reg)?)?;
                 pop_base_reg = true;
                 ass.add_instruction(Instruction::with2(
@@ -196,10 +190,7 @@ fn load_store_pair(
         ass,
         operands[2],
         reg1_translation.is_indirect() || reg2_translation.is_indirect(),
-        |reg| {
-            let reg = RegTranslation::Direct(reg);
-            reg != reg1_translation && reg != reg2_translation
-        },
+        &[reg1_translation, reg2_translation],
     )?;
 
     gen_fn(ass, reg1_translation, reg_class, &addr_mode_info, 0)?;
@@ -224,7 +215,7 @@ fn load_store(
         ass,
         operands[1],
         reg_translation.is_indirect(),
-        |reg_candidate| reg_translation != RegTranslation::Direct(reg_candidate),
+        &[reg_translation],
     )?;
 
     gen_fn(ass, reg_translation, reg_class, &addr_mode_info, 0)?;
