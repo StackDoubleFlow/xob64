@@ -12,6 +12,7 @@ macro_rules! wrapped_landing_pad {
                 "mov r10, [rsp]",
                 "mov r11, [rsp + 8]",
                 "add rsp, 16",
+                "mov rdi, rax", // Return value
                 "mov [r15 + {}], r11",
                 "call {}",
                 sym $func,

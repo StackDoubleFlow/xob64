@@ -163,21 +163,19 @@ pub fn call(ptr: *const u8, args: &[*const u8]) {
             "push 0",
             "push 0",
             // argc
-            "mov [rsp + {argc} * 8], {argc}",
             "mov {add_align}, {argc}", // Re-use add_align to save a copy of argc
+            "shl {add_align}, 3",
+            "sub rsp, {add_align}", // Reserve space for argv
+            "push {argc}",
             // argv
             "4: test {argc}, {argc}",
             "jz 3f",
             "sub {argc}, 1",
             "mov {temp}, [{argv} + {argc} * 8]",
-            "mov [rsp + {argc} * 8], {temp}",
+            "mov [rsp + {argc} * 8 + 8], {temp}",
             "jmp 4b",
             "3:",
             // Make room for argv using argc copy
-            "shl {add_align}, 3",
-            "sub rsp, {add_align}",
-            // Make room for argc
-            "sub rsp, 8",
 
             // Load link register
             "lea r11, [rip + 2f]",
@@ -192,6 +190,7 @@ pub fn call(ptr: *const u8, args: &[*const u8]) {
             "add rsp, rax",
             // Pop argv and envp terminators
             "add rsp, 16",
+
             // Reverse rsp alignment correction
             "pop rax",
             "test rax, rax",
@@ -207,8 +206,8 @@ pub fn call(ptr: *const u8, args: &[*const u8]) {
             temp = in(reg) 0u64,
             // Emulated code mostly follows the C calling convention except for r15 which additionally
             clobber_abi("C"),
-            lateout("r15") _
+            out("r15") _
         )
     }
-    println!("returned from call");
+    println!("returned from initializer call");
 }
