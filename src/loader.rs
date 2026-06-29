@@ -368,6 +368,5 @@ pub fn load_object(name: &CStr) -> usize {
 
 pub fn get_symbol(name: &CStr) -> Option<*const u8> {
     let object_pool = OBJECT_POOL.lock().unwrap();
-    dbg!(&object_pool.symbol_table.global_symbols);
     object_pool.symbol_table.global_symbols.get(name).cloned()
 }

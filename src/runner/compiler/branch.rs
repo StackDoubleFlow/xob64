@@ -1,5 +1,5 @@
 use iced_x86::{
-    Code, Instruction, Register,
+    Code, Instruction, MemoryOperand, Register,
     code_asm::{CodeAssembler, gpr64},
 };
 
@@ -111,6 +111,24 @@ pub fn compile_instr(
             make_jump(ass, operands[0], chunk_addr, exec_pool)?;
         }
         Op::CBZ | Op::CBNZ => handle_cbz_cbnz(arm_instr, ass, exec_pool, chunk_addr)?,
+        Op::BR => {
+            let (src, _) = translate_reg(unwrap_reg(operands[0]));
+            src.pre_read(ass, RegClass::GPR64)?;
+            let mut mov = Instruction::with2(
+                Code::Mov_rm64_r64,
+                MemoryOperand::with_base_displ(
+                    Register::R15,
+                    std::mem::offset_of!(ExecCtx, param) as i64,
+                ),
+                Register::None,
+            )?;
+            src.set_reg_operand(&mut mov, 1, RegClass::GPR64);
+            ass.add_instruction(mov)?;
+            make_call(
+                ass,
+                callbacks::indirect_jump_landing_pad as *const u8 as u64,
+            )?;
+        }
         Op::RET => {
             ass.mov(
                 gpr64::r15 + std::mem::offset_of!(ExecCtx, param),
