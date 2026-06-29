@@ -11,7 +11,7 @@ use object::{
     read::elf::{ElfFile64, ElfSegment64, Sym},
 };
 
-use crate::runner;
+use crate::{runner, wrapped};
 
 const PAGE_SIZE: LazyLock<usize> =
     LazyLock::new(|| unsafe { nix::libc::sysconf(nix::libc::_SC_PAGE_SIZE) as usize });
@@ -236,16 +236,7 @@ fn get_dlsym(name: &CStr) -> *const u8 {
 // Returns true if succeeded
 fn try_load_wrapped(name: &str, symbol_table: &mut SymbolTable) -> bool {
     if name.starts_with("libc.so") {
-        let names = [c"abort", c"puts"];
-        for name in names {
-            symbol_table
-                .global_symbols
-                .insert(name.to_owned(), get_dlsym(name));
-        }
-        // TODO
-        symbol_table
-            .global_symbols
-            .insert(c"__libc_start_main".to_owned(), std::ptr::null());
+        wrapped::libc::register_symbols(symbol_table);
         true
     } else {
         false

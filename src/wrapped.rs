@@ -3,16 +3,20 @@ pub mod libc;
 macro_rules! wrapped_landing_pad {
     ($name:ident, $func:ident) => {
         #[unsafe(naked)]
-        pub extern "C" fn $name() {
+        extern "C" fn $name() {
             std::arch::naked_asm!(
-                "sub rsp, 8",
-                "mov [r15 + {}], r10",
+                "sub rsp, 16",
+                "mov [rsp], r10",
+                "mov [rsp + 8], r11",
                 "call {}",
-                "mov r10, [r15 + {}]",
-                "add rsp, 8",
-                const $crate::runner::ExecCtx::PARAM_OFFSET,
+                "mov r10, [rsp]",
+                "mov r11, [rsp + 8]",
+                "add rsp, 16",
+                "mov [r15 + {}], r11",
+                "call {}",
                 sym $func,
                 const $crate::runner::ExecCtx::PARAM_OFFSET,
+                sym $crate::runner::callbacks::indirect_jump_landing_pad
             )
         }
     };

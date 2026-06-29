@@ -1,4 +1,4 @@
-mod callbacks;
+pub mod callbacks;
 mod compiler;
 
 use std::{
