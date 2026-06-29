@@ -31,8 +31,15 @@ struct EmuObject {
 }
 
 #[derive(Default)]
-struct SymbolTable {
+pub struct SymbolTable {
     global_symbols: HashMap<CString, *const u8>,
+}
+
+impl SymbolTable {
+    pub fn insert_global(&mut self, name: &CStr, addr: *const ()) {
+        self.global_symbols
+            .insert(name.to_owned(), addr as *const u8);
+    }
 }
 
 static OBJECT_POOL: LazyLock<Arc<Mutex<ObjectPool>>> =

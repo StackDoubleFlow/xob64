@@ -1,5 +1,6 @@
 mod loader;
 mod runner;
+mod wrapped;
 
 use std::{env, ffi::CString, os::unix::ffi::OsStringExt};
 

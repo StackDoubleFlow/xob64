@@ -115,11 +115,15 @@ pub fn from_exec(ptr: *const u8) -> *const u8 {
 
 #[repr(C)]
 #[derive(Default, Debug)]
-struct ExecCtx {
+pub struct ExecCtx {
     indirect_regs: [u64; 18],
     indirect_fp_regs: [u128; 17],
     // Used to pass info to a callback function
     param: u64,
+}
+
+impl ExecCtx {
+    pub const PARAM_OFFSET: usize = std::mem::offset_of!(Self, param);
 }
 
 pub fn call(ptr: *const u8) {
