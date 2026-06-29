@@ -84,7 +84,7 @@ extern "C" fn rewrite_branch(_ctx: *mut ExecCtx, ret_ptr: *const u8) -> u64 {
     let arm_code = unsafe { *(arm_ptr as *const u32) };
     let arm_instr = bad64::decode(arm_code, arm_ptr as u64).expect("failed to decode instr");
 
-    println!(
+    eprintln!(
         "rewriting branch at {:?}: {}",
         arm_ptr,
         // We should never fail to decode here since that an invalid instruction would have triggered the invalid_arm_instr callback.
@@ -101,7 +101,7 @@ extern "C" fn indirect_jump(ctx: *mut ExecCtx, _ret_ptr: *const u8) -> u64 {
 
     let ret_addr = get_exec(ctx.param as *const u8);
 
-    println!("indirect jump to {:x} -> {:x}", ctx.param, ret_addr as u64);
+    eprintln!("indirect jump to {:x} -> {:x}", ctx.param, ret_addr as u64);
     ret_addr as u64
 }
 

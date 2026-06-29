@@ -3,7 +3,6 @@ mod compiler;
 
 use std::{
     collections::HashMap,
-    ffi::CStr,
     sync::{Arc, LazyLock, Mutex},
 };
 
@@ -50,7 +49,7 @@ static EXEC_POOL: LazyLock<Arc<Mutex<ExecPool>>> =
 pub fn define_exec_range(start: *const u8, end: *const u8) {
     let mut exec_pool = EXEC_POOL.lock().unwrap();
     let range = ExecutableRange { start, end };
-    println!(
+    eprintln!(
         "marking executable range: {:?}-{:?}",
         range.start, range.end
     );
@@ -129,10 +128,10 @@ impl ExecCtx {
 
 pub fn call(ptr: *const u8, args: &[*const u8]) {
     let exec_ptr = get_exec(ptr);
-    println!("calling {:?} -> {:?}", ptr, exec_ptr);
+    eprintln!("calling {:?} -> {:?}", ptr, exec_ptr);
     let mut ctx = ExecCtx::default();
     let ctx_ptr = &mut ctx as *mut ExecCtx;
-    println!("ctx_ptr: {:?}", ctx_ptr);
+    eprintln!("ctx_ptr: {:?}", ctx_ptr);
 
     let argc = args.len();
     let argv = args.as_ptr();
@@ -209,5 +208,5 @@ pub fn call(ptr: *const u8, args: &[*const u8]) {
             out("r15") _
         )
     }
-    println!("returned from initializer call");
+    eprintln!("returned from initializer call");
 }
