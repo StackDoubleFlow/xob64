@@ -3,6 +3,7 @@ mod compiler;
 
 use std::{
     collections::HashMap,
+    ffi::CStr,
     sync::{Arc, LazyLock, Mutex},
 };
 
@@ -126,29 +127,87 @@ impl ExecCtx {
     pub const PARAM_OFFSET: usize = std::mem::offset_of!(Self, param);
 }
 
-pub fn call(ptr: *const u8) {
+pub fn call(ptr: *const u8, args: &[*const u8]) {
     let exec_ptr = get_exec(ptr);
     println!("calling {:?} -> {:?}", ptr, exec_ptr);
     let mut ctx = ExecCtx::default();
     let ctx_ptr = &mut ctx as *mut ExecCtx;
     println!("ctx_ptr: {:?}", ctx_ptr);
+
+    let argc = args.len();
+    let argv = args.as_ptr();
+
+    // envp, argc and argv take up:
+    // - 8 bytes for add_align
+    // - 8 bytes for envp terminator
+    // - 8 bytes for argc terminator
+    // - argc*8 bytes for argv
+    // - 8 bytes for argc
+    // This totals to 32 + argc*8 bytes
+    // To maintain 16 byte rsp alignment, if argc is odd, we need to add an extra 8 bytes
+    let add_align = (argc % 2 == 1) as usize;
+
     unsafe {
         std::arch::asm!(
             // Load emulation context register.
-            // r15 is callee-saved so we need to preserve it.
-            "sub rsp, 16",
-            "mov [rsp], r15",
-            "mov r15, r11",
+            "mov r15, {ctx_ptr}",
+
+            // Stack alignment correction
+            "push {add_align}",
+            "test {add_align}, {add_align}",
+            "jz 5f",
+            "sub rsp, 8",
+            "5:",
+
+            // Zero terminators for envp and argv
+            "push 0",
+            "push 0",
+            // argc
+            "mov [rsp + {argc} * 8], {argc}",
+            "mov {add_align}, {argc}", // Re-use add_align to save a copy of argc
+            // argv
+            "4: test {argc}, {argc}",
+            "jz 3f",
+            "sub {argc}, 1",
+            "mov {temp}, [{argv} + {argc} * 8]",
+            "mov [rsp + {argc} * 8], {temp}",
+            "jmp 4b",
+            "3:",
+            // Make room for argv using argc copy
+            "shl {add_align}, 3",
+            "sub rsp, {add_align}",
+            // Make room for argc
+            "sub rsp, 8",
+
             // Load link register
             "lea r11, [rip + 2f]",
-            "jmp {}",
-            // Restore r15 from the stack.
-            "2: mov r15, [rsp]",
+            // Jump to emulation
+            "jmp {target}",
+            "2:",
+
+            // Pop argc
+            "pop rax",
+            // Pop argv
+            "shl rax, 3",
+            "add rsp, rax",
+            // Pop argv and envp terminators
             "add rsp, 16",
-            in(reg) exec_ptr,
-            // r11 is an arbitrary caller-saved register (not related to the emulation context)
-            in("r11") ctx_ptr,
-            clobber_abi("C")
+            // Reverse rsp alignment correction
+            "pop rax",
+            "test rax, rax",
+            "jz 6f",
+            "pop rax",
+            "6:",
+
+            target = in(reg) exec_ptr,
+            ctx_ptr = in(reg) ctx_ptr,
+            argc = in(reg) argc,
+            argv = in(reg) argv,
+            add_align = in(reg) add_align,
+            temp = in(reg) 0u64,
+            // Emulated code mostly follows the C calling convention except for r15 which additionally
+            clobber_abi("C"),
+            lateout("r15") _
         )
     }
     println!("returned from call");

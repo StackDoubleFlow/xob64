@@ -300,7 +300,7 @@ fn collect_init_fini(elf: &ElfFile64, base_ptr: *const u8) -> (Vec<*const u8>, V
     (init_array, fini_array)
 }
 
-pub fn load_object(name: &CStr) -> usize {
+pub fn load_object(name: &CStr, args: &[*const u8]) -> usize {
     let name = OsStr::from_bytes(name.to_bytes());
     let mut object_pool = OBJECT_POOL.lock().unwrap();
 
@@ -367,7 +367,7 @@ pub fn load_object(name: &CStr) -> usize {
     drop(object_pool);
 
     for &ptr in &init_array {
-        runner::call(ptr);
+        runner::call(ptr, args);
     }
 
     idx
