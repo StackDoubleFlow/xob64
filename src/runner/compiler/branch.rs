@@ -1,6 +1,6 @@
 use iced_x86::{
     Code, Instruction, MemoryOperand, Register,
-    code_asm::{CodeAssembler, gpr64},
+    code_asm::{CodeAssembler, CodeLabel, gpr64, ptr},
 };
 
 use crate::runner::{
@@ -93,6 +93,24 @@ fn handle_cbz_cbnz(
     Ok(())
 }
 
+fn push_shadow_stack(ass: &mut CodeAssembler, label: CodeLabel, reg: Register) -> IcedResult<()> {
+    // TODO: avoid spilling register
+    ass.push(gpr64::r10)?;
+    let shadow_sp = ptr(gpr64::r15 + ExecCtx::SHADOW_SP_OFFSET);
+    ass.mov(gpr64::r10, shadow_sp)?;
+    ass.sub(gpr64::r10, 16)?;
+    ass.add_instruction(Instruction::with2(
+        Code::Mov_rm64_r64,
+        MemoryOperand::with_base_displ(Register::R10, 8),
+        reg,
+    )?)?;
+    ass.lea(gpr64::rax, ptr(label))?;
+    ass.mov(ptr(gpr64::r10), gpr64::rax)?;
+    ass.mov(shadow_sp, gpr64::r10)?;
+    ass.pop(gpr64::r10)?;
+    Ok(())
+}
+
 // Returns true if the instruction was successfully translated.
 pub fn compile_instr(
     arm_instr: &bad64::Instruction,
@@ -107,8 +125,14 @@ pub fn compile_instr(
             make_jump(ass, operands[0], chunk_addr, exec_pool)?;
         }
         Op::BL => {
+            // Load link register
             ass.mov(gpr64::r11, arm_instr.address() + 4)?;
+            // Push shadow stack
+            let ret_label = ass.fwd()?;
+            push_shadow_stack(ass, ret_label, Register::R11)?;
             make_jump(ass, operands[0], chunk_addr, exec_pool)?;
+            ass.anonymous_label()?;
+            ass.zero_bytes()?;
         }
         Op::CBZ | Op::CBNZ => handle_cbz_cbnz(arm_instr, ass, exec_pool, chunk_addr)?,
         Op::BR => {
@@ -130,6 +154,26 @@ pub fn compile_instr(
             )?;
         }
         Op::RET => {
+            let shadow_sp = ptr(gpr64::r15 + ExecCtx::SHADOW_SP_OFFSET);
+            // ass.int3()?;
+            ass.push(gpr64::r10)?;
+            // Load shadow sp
+            ass.mov(gpr64::r10, shadow_sp)?;
+            // Check if emulated pointer matches
+            ass.mov(gpr64::rax, ptr(gpr64::r10 + 8))?;
+            ass.cmp(gpr64::r11, gpr64::rax)?;
+            // Load native pointer
+            ass.mov(gpr64::rax, ptr(gpr64::r10))?;
+            // Pop pointers from stack
+            ass.lea(gpr64::r10, gpr64::r10 + 16)?;
+            ass.mov(shadow_sp, gpr64::r10)?;
+            ass.pop(gpr64::r10)?;
+            // If the emulated pointer matches, we jump to the native pointer
+            let callback_label = ass.fwd()?;
+            ass.jne(callback_label)?;
+            ass.jmp(gpr64::rax)?;
+            // Otherwise, we do an indirect call
+            ass.anonymous_label()?;
             ass.mov(
                 gpr64::r15 + std::mem::offset_of!(ExecCtx, param),
                 gpr64::r11,

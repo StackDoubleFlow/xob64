@@ -6,8 +6,13 @@ use std::{
     sync::{Arc, LazyLock, Mutex},
 };
 
+use nix::libc;
+
+use crate::loader::PAGE_SIZE;
+
 const CHUNK_SIZE: usize = 512;
 const EXECUTABLE_ALLOC_SIZE: usize = 1024 * 16;
+const SHADOW_STACK_SIZE: usize = 4096;
 
 struct ExecutableRange {
     start: *const u8,
@@ -114,22 +119,63 @@ pub fn from_exec(ptr: *const u8) -> *const u8 {
 }
 
 #[repr(C)]
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct ExecCtx {
     indirect_regs: [u64; 18],
     indirect_fp_regs: [u128; 17],
     // Used to pass info to a callback function
     param: u64,
+    shadow_sp: *mut u64,
+    shadow_stack_alloc: *mut libc::c_void,
 }
 
 impl ExecCtx {
     pub const PARAM_OFFSET: usize = std::mem::offset_of!(Self, param);
+    pub const SHADOW_SP_OFFSET: usize = std::mem::offset_of!(Self, shadow_sp);
+
+    pub fn new() -> Self {
+        let shadow_stack_alloc = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                SHADOW_STACK_SIZE,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_GROWSDOWN,
+                -1,
+                0,
+            )
+        };
+        Self {
+            indirect_regs: Default::default(),
+            indirect_fp_regs: Default::default(),
+            param: 0,
+            shadow_sp: shadow_stack_alloc.wrapping_byte_add(SHADOW_STACK_SIZE) as _,
+            shadow_stack_alloc,
+        }
+    }
+
+    fn push_shadow_stack(&mut self, arm_ptr: *const u8, native_ptr: *const u8) {
+        self.shadow_sp = self.shadow_sp.wrapping_byte_sub(16);
+        unsafe {
+            self.shadow_sp.wrapping_byte_add(8).write(arm_ptr as u64);
+            self.shadow_sp.write(native_ptr as u64);
+        }
+    }
+}
+
+impl Drop for ExecCtx {
+    fn drop(&mut self) {
+        unsafe {
+            libc::munmap(self.shadow_stack_alloc, SHADOW_STACK_SIZE);
+        }
+    }
 }
 
 pub fn call(ptr: *const u8, args: &[*const u8]) {
     let exec_ptr = get_exec(ptr);
     eprintln!("calling {:?} -> {:?}", ptr, exec_ptr);
-    let mut ctx = ExecCtx::default();
+    let mut ctx = ExecCtx::new();
+    // The pointers will be filled in by the inline asm
+    ctx.push_shadow_stack(std::ptr::null(), std::ptr::null());
     let ctx_ptr = &mut ctx as *mut ExecCtx;
     eprintln!("ctx_ptr: {:?}", ctx_ptr);
 
@@ -178,6 +224,10 @@ pub fn call(ptr: *const u8, args: &[*const u8]) {
 
             // Load link register
             "lea r11, [rip + 2f]",
+            // Store return address on shadow stack
+            "mov {temp}, [r15 + {shadow_sp}]",
+            "mov [{temp} + 9], r11",
+            "mov [{temp}], r11",
             // Jump to emulation
             "jmp {target}",
             "2:",
@@ -203,6 +253,7 @@ pub fn call(ptr: *const u8, args: &[*const u8]) {
             argv = in(reg) argv,
             add_align = in(reg) add_align,
             temp = in(reg) 0u64,
+            shadow_sp = const ExecCtx::SHADOW_SP_OFFSET,
             // Emulated code mostly follows the C calling convention except for r15 which additionally
             clobber_abi("C"),
             out("r15") _

@@ -13,7 +13,7 @@ use object::{
 
 use crate::{runner, wrapped};
 
-const PAGE_SIZE: LazyLock<usize> =
+pub const PAGE_SIZE: LazyLock<usize> =
     LazyLock::new(|| unsafe { nix::libc::sysconf(nix::libc::_SC_PAGE_SIZE) as usize });
 
 #[derive(Default)]

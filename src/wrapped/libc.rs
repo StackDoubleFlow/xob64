@@ -12,7 +12,7 @@ pub fn register_symbols(symbol_table: &mut SymbolTable) {
 
 wrapped_landing_pad!(__libc_start_main, __libc_start_main_impl);
 extern "C" fn __libc_start_main_impl(main_fn: *const u8, argc: u32, argv: *const *const u8) {
-    let mut ctx = ExecCtx::default();
+    let mut ctx = ExecCtx::new();
     let ctx_ptr = &mut ctx as *mut ExecCtx;
     let target = get_exec(main_fn);
 
