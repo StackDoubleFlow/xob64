@@ -12,19 +12,23 @@ use crate::runner::{
     get_exec,
 };
 
+pub fn write_jump(at: *const u8, dest: u64) {
+    let mut ass = CodeAssembler::new(64).unwrap();
+    ass.mov(gpr64::rax, dest).unwrap();
+    ass.jmp(gpr64::rax).unwrap();
+
+    let new_code = ass.assemble(at as u64).unwrap();
+    assert_eq!(new_code.len(), 12);
+    let code_slice = unsafe { std::slice::from_raw_parts_mut(at.cast_mut(), 12) };
+    code_slice.copy_from_slice(&new_code);
+}
+
 pub fn rewrite_branch(arm_instr: &bad64::Instruction, call_ptr: *const u8) -> *const u8 {
     assert!(arm_instr.op() == bad64::Op::BL || arm_instr.op() == bad64::Op::B);
     let label_target = label_target(arm_instr.operands()[0]);
     let exec_ptr = get_exec(label_target as *const u8);
 
-    let mut ass = CodeAssembler::new(64).unwrap();
-    ass.mov(gpr64::rax, exec_ptr as u64).unwrap();
-    ass.jmp(gpr64::rax).unwrap();
-
-    let new_code = ass.assemble(call_ptr as u64).unwrap();
-    assert_eq!(new_code.len(), 12);
-    let code_slice = unsafe { std::slice::from_raw_parts_mut(call_ptr.cast_mut(), 12) };
-    code_slice.copy_from_slice(&new_code);
+    write_jump(call_ptr, exec_ptr as u64);
 
     exec_ptr
 }
@@ -155,7 +159,6 @@ pub fn compile_instr(
         }
         Op::RET => {
             let shadow_sp = ptr(gpr64::r15 + ExecCtx::SHADOW_SP_OFFSET);
-            // ass.int3()?;
             ass.push(gpr64::r10)?;
             // Load shadow sp
             ass.mov(gpr64::r10, shadow_sp)?;

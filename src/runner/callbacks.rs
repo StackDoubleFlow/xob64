@@ -105,7 +105,17 @@ extern "C" fn indirect_jump(ctx: *mut ExecCtx, _ret_ptr: *const u8) -> u64 {
     ret_addr as u64
 }
 
-pub extern "C" fn end_of_chunk() {
-    eprintln!("todo: end of chunk");
-    std::process::abort();
+resumable_landing_pad!(end_of_chunk_landing_pad, end_of_chunk);
+extern "C" fn end_of_chunk(_ctx: *mut ExecCtx, ret_ptr: *const u8) -> u64 {
+    // 12 is the length of the mov + call
+    let call_ptr = ret_ptr.wrapping_sub(12);
+    let arm_ptr = from_exec(call_ptr);
+    let next_arm_ptr = arm_ptr.wrapping_byte_add(4);
+    let next_chunk_start = get_exec(next_arm_ptr);
+    branch::write_jump(call_ptr, next_chunk_start as u64);
+    eprintln!(
+        "rewrite end of chunk {:?}, jump to {:?}",
+        call_ptr, next_chunk_start
+    );
+    next_chunk_start as u64
 }

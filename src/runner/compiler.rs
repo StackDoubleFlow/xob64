@@ -168,7 +168,11 @@ pub fn compile_chunk(exec_pool: &mut ExecPool, chunk_addr: usize) -> CompiledChu
 
         compile_instr(exec_pool, &arm_instr, &mut ass, chunk_addr).unwrap();
     }
-    make_call(&mut ass, callbacks::end_of_chunk as *const () as u64).unwrap();
+    make_call(
+        &mut ass,
+        callbacks::end_of_chunk_landing_pad as *const () as u64,
+    )
+    .unwrap();
 
     let compiled_chunk = finalize_ass(exec_pool, ass, &x86_idxs);
     dump::dump_translation(chunk_addr, &compiled_chunk);
