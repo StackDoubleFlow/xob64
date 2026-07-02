@@ -1,14 +1,22 @@
+use nix::libc;
+
 use crate::{
     loader::SymbolTable,
     runner::{ExecCtx, get_exec},
-    wrapped::wrapped_landing_pad,
+    wrapped::{load_proxy, wrapped_landing_pad, wrapped_lib_proxy},
 };
 
 pub fn register_symbols(symbol_table: &mut SymbolTable) {
+    unsafe {
+        let handle = libc::dlopen(c"libc.so".as_ptr(), libc::RTLD_LAZY);
+        load_proxy(symbol_table, handle, &abort::INFO);
+        load_proxy(symbol_table, handle, &puts::INFO);
+    }
     symbol_table.insert_global(c"__libc_start_main", __libc_start_main as *const ());
-    symbol_table.insert_global(c"abort", abort as *const ());
-    symbol_table.insert_global(c"puts", puts as *const ());
 }
+
+wrapped_lib_proxy!(abort, c"abort");
+wrapped_lib_proxy!(puts, c"puts");
 
 wrapped_landing_pad!(__libc_start_main, __libc_start_main_impl);
 extern "C" fn __libc_start_main_impl(main_fn: *const u8, argc: u32, argv: *const *const u8) {
@@ -40,14 +48,4 @@ extern "C" fn __libc_start_main_impl(main_fn: *const u8, argc: u32, argv: *const
         )
     }
     std::process::exit(result as i32);
-}
-
-wrapped_landing_pad!(abort, abort_impl);
-extern "C" fn abort_impl() {
-    std::process::abort();
-}
-
-wrapped_landing_pad!(puts, puts_impl);
-extern "C" fn puts_impl(str: *const i8) -> i32 {
-    unsafe { nix::libc::puts(str) }
 }
