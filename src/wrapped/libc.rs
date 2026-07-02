@@ -16,6 +16,7 @@ extern "C" fn __libc_start_main_impl(main_fn: *const u8, argc: u32, argv: *const
     let ctx_ptr = &mut ctx as *mut ExecCtx;
     let target = get_exec(main_fn);
 
+    eprintln!("calling main: {:?} -> {:?}", main_fn, target);
     let result: i32;
     unsafe {
         std::arch::asm!(
