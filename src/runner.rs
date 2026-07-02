@@ -153,7 +153,7 @@ impl ExecCtx {
         }
     }
 
-    fn push_shadow_stack(&mut self, arm_ptr: *const u8, native_ptr: *const u8) {
+    pub fn push_shadow_stack(&mut self, arm_ptr: *const u8, native_ptr: *const u8) {
         self.shadow_sp = self.shadow_sp.wrapping_byte_sub(16);
         unsafe {
             self.shadow_sp.wrapping_byte_add(8).write(arm_ptr as u64);
