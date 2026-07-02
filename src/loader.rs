@@ -6,15 +6,16 @@ use std::{
     sync::{Arc, LazyLock, Mutex},
 };
 
+use nix::libc;
 use object::{
     Object, ObjectSegment, ObjectSymbol, ObjectSymbolTable, RelocationFlags, RelocationTarget, elf,
     read::elf::{ElfFile64, ElfSegment64, Sym},
 };
 
-use crate::{runner, wrapped};
+use crate::{runner, wrapped::try_load_wrapped};
 
 pub const PAGE_SIZE: LazyLock<usize> =
-    LazyLock::new(|| unsafe { nix::libc::sysconf(nix::libc::_SC_PAGE_SIZE) as usize });
+    LazyLock::new(|| unsafe { libc::sysconf(libc::_SC_PAGE_SIZE) as usize });
 
 #[derive(Default)]
 struct ObjectPool {
@@ -58,10 +59,10 @@ unsafe fn load_segment(segment: ElfSegment64, fd: i32, base_addr: *const u8) {
 
     let mut prot = Default::default();
     if segment.permissions().writable() {
-        prot |= nix::libc::PROT_WRITE;
+        prot |= libc::PROT_WRITE;
     }
     if segment.permissions().readable() {
-        prot |= nix::libc::PROT_READ;
+        prot |= libc::PROT_READ;
     }
 
     let file_offset = segment.file_range().0;
@@ -80,18 +81,18 @@ unsafe fn load_segment(segment: ElfSegment64, fd: i32, base_addr: *const u8) {
     );
     // Map segment
     let mapped_addr = unsafe {
-        nix::libc::mmap(
-            aligned_addr as *mut nix::libc::c_void,
+        libc::mmap(
+            aligned_addr as *mut libc::c_void,
             aligned_size,
             prot,
-            nix::libc::MAP_PRIVATE | nix::libc::MAP_FIXED_NOREPLACE,
+            libc::MAP_PRIVATE | libc::MAP_FIXED_NOREPLACE,
             fd,
             map_offset,
         )
     } as *const u8;
     if mapped_addr as isize == -1 {
         unsafe {
-            nix::libc::perror(c"mmap failed".as_ptr());
+            libc::perror(c"mmap failed".as_ptr());
         }
         panic!(
             "mapping failed: {:?} ({}), offset: {}",
@@ -113,7 +114,7 @@ unsafe fn load_segment(segment: ElfSegment64, fd: i32, base_addr: *const u8) {
             file_load_end + zero_len
         );
         unsafe {
-            nix::libc::memset(file_load_end as *mut nix::libc::c_void, 0, zero_len);
+            libc::memset(file_load_end as *mut libc::c_void, 0, zero_len);
         }
     }
 
@@ -137,11 +138,11 @@ fn generate_suitable_base_addr(elf: &ElfFile64) -> *const u8 {
     let end = align_to_next(unaligned_end as usize, *PAGE_SIZE) + base_alignment - *PAGE_SIZE;
 
     let mapped_addr = unsafe {
-        nix::libc::mmap(
+        libc::mmap(
             std::ptr::null_mut(),
             end,
             0,
-            nix::libc::MAP_PRIVATE | nix::libc::MAP_ANONYMOUS,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
             -1,
             0,
         )
@@ -149,13 +150,13 @@ fn generate_suitable_base_addr(elf: &ElfFile64) -> *const u8 {
 
     if mapped_addr as isize == -1 {
         unsafe {
-            nix::libc::perror(c"mmap failed".as_ptr());
+            libc::perror(c"mmap failed".as_ptr());
         }
         panic!("mapping failed");
     }
 
     unsafe {
-        nix::libc::munmap(mapped_addr, end);
+        libc::munmap(mapped_addr, end);
     }
 
     let base_addr = align_to_next(mapped_addr as usize, base_alignment);
@@ -228,18 +229,8 @@ fn resolve_relocations(elf: &ElfFile64, base_addr: *mut u8, symbol_table: &Symbo
 
 fn get_dlsym(name: &CStr) -> *const u8 {
     unsafe {
-        let handle = nix::libc::dlopen(std::ptr::null(), nix::libc::RTLD_LAZY);
-        nix::libc::dlsym(handle, name.as_ptr()) as *const u8
-    }
-}
-
-// Returns true if succeeded
-fn try_load_wrapped(name: &str, symbol_table: &mut SymbolTable) -> bool {
-    if name.starts_with("libc.so") {
-        wrapped::libc::register_symbols(symbol_table);
-        true
-    } else {
-        false
+        let handle = libc::dlopen(std::ptr::null(), libc::RTLD_LAZY);
+        libc::dlsym(handle, name.as_ptr()) as *const u8
     }
 }
 

@@ -7,11 +7,9 @@ use crate::{
 };
 
 pub fn register_symbols(symbol_table: &mut SymbolTable) {
-    unsafe {
-        let handle = libc::dlopen(c"libc.so".as_ptr(), libc::RTLD_LAZY);
-        load_proxy(symbol_table, handle, &abort::INFO);
-        load_proxy(symbol_table, handle, &puts::INFO);
-    }
+    let handle = unsafe { libc::dlopen(c"libc.so".as_ptr(), libc::RTLD_LAZY) };
+    load_proxy(symbol_table, handle, &abort::INFO);
+    load_proxy(symbol_table, handle, &puts::INFO);
     symbol_table.insert_global(c"__libc_start_main", __libc_start_main as *const ());
 }
 

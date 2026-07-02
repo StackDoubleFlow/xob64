@@ -1,4 +1,19 @@
 pub mod libc;
+pub mod libcap;
+
+// Returns true if succeeded
+pub fn try_load_wrapped(name: &str, symbol_table: &mut SymbolTable) -> bool {
+    if name.starts_with("libc.so") {
+        libc::register_symbols(symbol_table);
+    } else if name.starts_with("libcap.so") {
+        libcap::register_symbols(symbol_table);
+    } else if name.starts_with("ld-linux-aarch64.so") {
+        // TODO
+    } else {
+        return false;
+    }
+    true
+}
 
 macro_rules! wrapped_landing_pad {
     ($name:ident, $func:ident) => {
@@ -43,11 +58,7 @@ struct LibProxyInfo {
 }
 unsafe impl Sync for LibProxyInfo {}
 
-unsafe fn load_proxy(
-    symbol_table: &mut SymbolTable,
-    handle: *mut nix::libc::c_void,
-    info: &LibProxyInfo,
-) {
+fn load_proxy(symbol_table: &mut SymbolTable, handle: *mut nix::libc::c_void, info: &LibProxyInfo) {
     let addr = unsafe { nix::libc::dlsym(handle, info.name.as_ptr()) as u64 };
     unsafe { *info.target = addr };
     symbol_table.insert_global(info.name, info.proxy_fn);
