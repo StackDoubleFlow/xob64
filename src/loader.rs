@@ -107,14 +107,29 @@ unsafe fn load_segment(segment: ElfSegment64, fd: i32, base_addr: *const u8) {
     // If the file mapping ends before the segment does, then we need to zero out the rest
     if segment.size() > file_size {
         let file_load_end = mapped_addr as usize + page_offset + file_size as usize;
-        let zero_len = mapping_end - file_load_end;
-        eprintln!(
-            "zeroing out from {:x} to {:x}",
-            file_load_end,
-            file_load_end + zero_len
-        );
+        eprintln!("zeroing out from {:x} to {:x}", file_load_end, mapping_end);
+        let page_break = align_to_next(file_load_end, *PAGE_SIZE);
         unsafe {
-            libc::memset(file_load_end as *mut libc::c_void, 0, zero_len);
+            // Write 0 from the end of the file to end of the page
+            libc::memset(
+                file_load_end as *mut libc::c_void,
+                0,
+                page_break - file_load_end,
+            );
+        }
+        // If the mapping ends beyond the last page of the file mapping, we need to create a new anonymous mapping for it and memset it to 0
+        if page_break < mapping_end {
+            unsafe {
+                libc::mmap(
+                    page_break as *mut libc::c_void,
+                    mapping_end - page_break,
+                    prot,
+                    libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_FIXED,
+                    -1,
+                    0,
+                );
+                libc::memset(page_break as *mut libc::c_void, 0, mapping_end - page_break);
+            }
         }
     }
 
