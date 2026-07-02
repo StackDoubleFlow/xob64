@@ -177,10 +177,7 @@ pub fn compile_instr(
             ass.jmp(gpr64::rax)?;
             // Otherwise, we do an indirect call
             ass.anonymous_label()?;
-            ass.mov(
-                gpr64::r15 + std::mem::offset_of!(ExecCtx, param),
-                gpr64::r11,
-            )?;
+            ass.mov(gpr64::r15 + ExecCtx::PARAM_OFFSET, gpr64::r11)?;
             make_call(
                 ass,
                 callbacks::indirect_jump_landing_pad as *const u8 as u64,

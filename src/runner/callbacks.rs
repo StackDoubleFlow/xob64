@@ -101,7 +101,10 @@ extern "C" fn indirect_jump(ctx: *mut ExecCtx, _ret_ptr: *const u8) -> u64 {
 
     let ret_addr = get_exec(ctx.param as *const u8);
 
-    eprintln!("indirect jump to {:x} -> {:x}", ctx.param, ret_addr as u64);
+    eprintln!(
+        "indirect jump to {:#x} -> {:#x}",
+        ctx.param, ret_addr as u64
+    );
     ret_addr as u64
 }
 
