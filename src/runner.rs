@@ -8,8 +8,6 @@ use std::{
 
 use nix::libc;
 
-use crate::loader::PAGE_SIZE;
-
 const CHUNK_SIZE: usize = 512;
 const EXECUTABLE_ALLOC_SIZE: usize = 1024 * 16;
 const SHADOW_STACK_SIZE: usize = 4096;
@@ -226,7 +224,7 @@ pub fn call(ptr: *const u8, args: &[*const u8]) {
             "lea r11, [rip + 2f]",
             // Store return address on shadow stack
             "mov {temp}, [r15 + {shadow_sp}]",
-            "mov [{temp} + 9], r11",
+            "mov [{temp} + 8], r11",
             "mov [{temp}], r11",
             // Jump to emulation
             "jmp {target}",

@@ -96,14 +96,16 @@ extern "C" fn rewrite_branch(_ctx: *mut ExecCtx, ret_ptr: *const u8) -> u64 {
 }
 
 resumable_landing_pad!(indirect_jump_landing_pad, indirect_jump);
-extern "C" fn indirect_jump(ctx: *mut ExecCtx, _ret_ptr: *const u8) -> u64 {
+extern "C" fn indirect_jump(ctx: *mut ExecCtx, ret_ptr: *const u8) -> u64 {
     let ctx = unsafe { &*ctx };
 
     let ret_addr = get_exec(ctx.param as *const u8);
 
+    // 12 is the length of the mov + call
+    let call_ptr = ret_ptr.wrapping_sub(12);
     eprintln!(
-        "indirect jump to {:#x} -> {:#x}",
-        ctx.param, ret_addr as u64
+        "indirect jump at {:?} to {:#x} -> {:#x}",
+        call_ptr, ctx.param, ret_addr as u64
     );
     ret_addr as u64
 }
