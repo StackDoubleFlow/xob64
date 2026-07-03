@@ -58,10 +58,19 @@ struct LibProxyInfo {
 }
 unsafe impl Sync for LibProxyInfo {}
 
+fn dlopen(name: &CStr) -> *mut nix::libc::c_void {
+    unsafe { nix::libc::dlopen(name.as_ptr(), nix::libc::RTLD_LAZY) }
+}
+
 fn load_proxy(symbol_table: &mut SymbolTable, handle: *mut nix::libc::c_void, info: &LibProxyInfo) {
     let addr = unsafe { nix::libc::dlsym(handle, info.name.as_ptr()) as u64 };
     unsafe { *info.target = addr };
     symbol_table.insert_global(info.name, info.proxy_fn);
+}
+
+fn load_direct(symbol_table: &mut SymbolTable, handle: *mut nix::libc::c_void, name: &CStr) {
+    let addr = unsafe { nix::libc::dlsym(handle, name.as_ptr()) as u64 };
+    symbol_table.insert_global(name, addr as *const ());
 }
 
 macro_rules! wrapped_lib_proxy {
