@@ -13,7 +13,7 @@ use iced_x86::{
 
 use crate::runner::{
     CHUNK_SIZE, CompiledChunk, EXECUTABLE_ALLOC_SIZE, ExecPool, callbacks,
-    compiler::instr_utils::make_call,
+    compiler::instr_utils::{IcedResult, make_call},
 };
 
 fn alloc_new_region(exec_pool: &mut ExecPool) {
@@ -109,7 +109,7 @@ pub fn compile_instr(
     arm_instr: &Result<bad64::Instruction, bad64::DecodeError>,
     ass: &mut CodeAssembler,
     chunk_addr: usize,
-) -> Result<(), iced_x86::IcedError> {
+) -> IcedResult<()> {
     let Ok(arm_instr) = arm_instr else {
         make_call(ass, callbacks::invalid_arm_instr as *const () as u64)?;
         return Ok(());

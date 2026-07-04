@@ -167,7 +167,7 @@ pub fn make_ri(
     Ok(())
 }
 
-pub fn make_call(ass: &mut CodeAssembler, target: u64) -> Result<(), iced_x86::IcedError> {
+pub fn make_call(ass: &mut CodeAssembler, target: u64) -> IcedResult<()> {
     ass.mov(gpr64::rax, target)?;
     ass.call(gpr64::rax)?;
     Ok(())

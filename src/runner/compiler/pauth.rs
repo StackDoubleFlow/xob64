@@ -1,10 +1,9 @@
 use iced_x86::code_asm::CodeAssembler;
 
+use crate::runner::compiler::instr_utils::IcedResult;
+
 // Returns true if the instruction was successfully translated.
-pub fn compile_instr(
-    arm_instr: &bad64::Instruction,
-    _ass: &mut CodeAssembler,
-) -> Result<bool, iced_x86::IcedError> {
+pub fn compile_instr(arm_instr: &bad64::Instruction, _ass: &mut CodeAssembler) -> IcedResult<bool> {
     use bad64::Op;
     match arm_instr.op() {
         // I don't think we have to emulate pointer authentication. These instructions modify the pointer in-place to add the PAC, so it shouldn't be a problem to have these be no-op.

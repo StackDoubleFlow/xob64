@@ -1,7 +1,7 @@
 use iced_x86::{Code, Instruction, MemoryOperand, Register, code_asm::CodeAssembler};
 
 use crate::runner::compiler::{
-    instr_utils::{get_alt_reg, load_indirect},
+    instr_utils::{IcedResult, get_alt_reg, load_indirect},
     register::{RegClass, RegTranslation, translate_reg, unwrap_reg},
 };
 
@@ -34,7 +34,7 @@ fn process_addr_mode(
     mem_operand: bad64::Operand,
     alternate_indirect: bool,
     alt_blockers: &[RegTranslation],
-) -> Result<AddrModeInfo, iced_x86::IcedError> {
+) -> IcedResult<AddrModeInfo> {
     let (base_reg, imm) = match mem_operand {
         bad64::Operand::MemOffset { reg, offset, .. } => (reg, offset),
         bad64::Operand::MemPreIdx { reg, imm } => (reg, imm),
@@ -94,10 +94,7 @@ fn process_addr_mode(
     Ok(addr_mode_info)
 }
 
-fn finalize_addr_mode(
-    ass: &mut CodeAssembler,
-    addr_mode_info: AddrModeInfo,
-) -> Result<(), iced_x86::IcedError> {
+fn finalize_addr_mode(ass: &mut CodeAssembler, addr_mode_info: AddrModeInfo) -> IcedResult<()> {
     if let Some(offset) = addr_mode_info.post_index_offset {
         ass.add_instruction(Instruction::with2(
             Code::Add_rm64_imm32,
@@ -128,7 +125,7 @@ type GenFn = fn(
     reg_class: RegClass,
     addr_mode_info: &AddrModeInfo,
     extra_offset: i64,
-) -> Result<(), iced_x86::IcedError>;
+) -> IcedResult<()>;
 
 fn make_store(
     ass: &mut CodeAssembler,
@@ -136,7 +133,7 @@ fn make_store(
     reg_class: RegClass,
     addr_mode_info: &AddrModeInfo,
     extra_offset: i64,
-) -> Result<(), iced_x86::IcedError> {
+) -> IcedResult<()> {
     src_translation.pre_read(ass, reg_class)?;
     let code = match reg_class {
         RegClass::GPR64 => Code::Mov_rm64_r64,
@@ -158,7 +155,7 @@ fn make_load(
     reg_class: RegClass,
     addr_mode_info: &AddrModeInfo,
     extra_offset: i64,
-) -> Result<(), iced_x86::IcedError> {
+) -> IcedResult<()> {
     let code = match reg_class {
         RegClass::GPR64 => Code::Mov_r64_rm64,
         RegClass::GPR32 => Code::Mov_r32_rm32,
@@ -178,7 +175,7 @@ fn load_store_pair(
     ass: &mut CodeAssembler,
     arm_instr: &bad64::Instruction,
     gen_fn: GenFn,
-) -> Result<(), iced_x86::IcedError> {
+) -> IcedResult<()> {
     let operands = arm_instr.operands();
 
     let reg1 = unwrap_reg(operands[0]);
@@ -205,7 +202,7 @@ fn load_store(
     ass: &mut CodeAssembler,
     arm_instr: &bad64::Instruction,
     gen_fn: GenFn,
-) -> Result<(), iced_x86::IcedError> {
+) -> IcedResult<()> {
     let operands = arm_instr.operands();
 
     let reg = unwrap_reg(operands[0]);
@@ -225,10 +222,7 @@ fn load_store(
 }
 
 // Returns true if the instruction was successfully translated.
-pub fn compile_instr(
-    arm_instr: &bad64::Instruction,
-    ass: &mut CodeAssembler,
-) -> Result<bool, iced_x86::IcedError> {
+pub fn compile_instr(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) -> IcedResult<bool> {
     use bad64::Op;
     match arm_instr.op() {
         Op::STP => load_store_pair(ass, arm_instr, make_store)?,

@@ -70,7 +70,7 @@ fn handle_cbz_cbnz(
     ass: &mut CodeAssembler,
     exec_pool: &mut ExecPool,
     chunk_addr: usize,
-) -> Result<(), iced_x86::IcedError> {
+) -> IcedResult<()> {
     let operands = arm_instr.operands();
 
     let (reg_translation, reg_class) = translate_reg(unwrap_reg(operands[0]));
@@ -121,7 +121,7 @@ pub fn compile_instr(
     ass: &mut CodeAssembler,
     exec_pool: &mut ExecPool,
     chunk_addr: usize,
-) -> Result<bool, iced_x86::IcedError> {
+) -> IcedResult<bool> {
     use bad64::Op;
     let operands = arm_instr.operands();
     match arm_instr.op() {
