@@ -6,6 +6,7 @@ use std::{
     sync::{Arc, LazyLock, Mutex},
 };
 
+use iced_x86::code_asm::CodeAssembler;
 use nix::libc;
 
 const CHUNK_SIZE: usize = 512;
@@ -258,4 +259,10 @@ pub fn call(ptr: *const u8, args: &[*const u8]) {
         )
     }
     eprintln!("returned from initializer call");
+}
+
+/// Helper function to compile and allocate a generic code assembler
+pub fn alloc_code(ass: CodeAssembler) -> *const u8 {
+    let mut exec_pool = EXEC_POOL.lock().unwrap();
+    compiler::finalize_ass(&mut exec_pool, ass).0 as _
 }

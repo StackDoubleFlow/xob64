@@ -12,7 +12,7 @@ use object::{
     read::elf::{ElfFile64, ElfSegment64, Sym},
 };
 
-use crate::{runner, wrapped::try_load_wrapped};
+use crate::{runner, wrapped::WrappedLib};
 
 pub const PAGE_SIZE: LazyLock<usize> =
     LazyLock::new(|| unsafe { libc::sysconf(libc::_SC_PAGE_SIZE) as usize });
@@ -20,28 +20,39 @@ pub const PAGE_SIZE: LazyLock<usize> =
 #[derive(Default)]
 struct ObjectPool {
     objects: Vec<EmuObject>,
-    symbol_table: SymbolTable,
+    wrapped_libs: Vec<WrappedLib>,
+    global_symbols: HashMap<CString, *const u8>,
 }
 
 // *const u8 is not normally Send
 unsafe impl Send for ObjectPool {}
+
+impl ObjectPool {
+    fn get_symbol(&mut self, name: &CStr) -> *const u8 {
+        if let Some(&addr) = self.global_symbols.get(name) {
+            return addr;
+        }
+        for lib in &self.wrapped_libs {
+            if let Some(addr) = lib.get_symbol(name) {
+                self.global_symbols.insert(name.to_owned(), addr);
+                return addr;
+            }
+        }
+        panic!("could not locate symbol: {:?}", name);
+    }
+}
 
 struct EmuObject {
     base_ptr: *const u8,
     fini_array: Vec<*const u8>,
 }
 
-#[derive(Default)]
-pub struct SymbolTable {
-    global_symbols: HashMap<CString, *const u8>,
-}
-
-impl SymbolTable {
-    pub fn insert_global(&mut self, name: &CStr, addr: *const ()) {
-        self.global_symbols
-            .insert(name.to_owned(), addr as *const u8);
-    }
-}
+// impl SymbolTable {
+//     pub fn insert_global(&mut self, name: &CStr, addr: *const ()) {
+//         self.global_symbols
+//             .insert(name.to_owned(), addr as *const u8);
+//     }
+// }
 
 static OBJECT_POOL: LazyLock<Arc<Mutex<ObjectPool>>> =
     LazyLock::new(|| Arc::new(Mutex::new(ObjectPool::default())));
@@ -178,7 +189,7 @@ fn generate_suitable_base_addr(elf: &ElfFile64) -> *const u8 {
     base_addr as *const u8
 }
 
-fn resolve_relocations(elf: &ElfFile64, base_addr: *mut u8, symbol_table: &SymbolTable) {
+fn resolve_relocations(obj_pool: &mut ObjectPool, elf: &ElfFile64, base_addr: *mut u8) {
     let write_u64 = |addr: u64, value: u64| unsafe {
         *base_addr.add(addr as usize).cast() = value;
     };
@@ -208,11 +219,7 @@ fn resolve_relocations(elf: &ElfFile64, base_addr: *mut u8, symbol_table: &Symbo
                 }
                 let name_bytes = symbol.name_bytes().unwrap();
                 let name = CString::new(name_bytes).unwrap();
-                if let Some(&value) = symbol_table.global_symbols.get(&name) {
-                    write_u64(addr, value as u64);
-                } else {
-                    unimplemented!("GOT symbol lookup: {:?}", name);
-                }
+                write_u64(addr, obj_pool.get_symbol(&name) as u64);
             }
             elf::R_AARCH64_JUMP_SLOT => {
                 let symbol_idx = match reloc.target() {
@@ -229,23 +236,12 @@ fn resolve_relocations(elf: &ElfFile64, base_addr: *mut u8, symbol_table: &Symbo
                 }
                 let name_bytes = symbol.name_bytes().unwrap();
                 let name = CString::new(name_bytes).unwrap();
-                if let Some(&value) = symbol_table.global_symbols.get(&name) {
-                    write_u64(addr, value as u64);
-                } else {
-                    unimplemented!("PLT symbol lookup: {:?}", name);
-                }
+                write_u64(addr, obj_pool.get_symbol(&name) as u64);
             }
             _ => {
                 unimplemented!("Relocation: {:#?}", reloc);
             }
         }
-    }
-}
-
-fn get_dlsym(name: &CStr) -> *const u8 {
-    unsafe {
-        let handle = libc::dlopen(std::ptr::null(), libc::RTLD_LAZY);
-        libc::dlsym(handle, name.as_ptr()) as *const u8
     }
 }
 
@@ -309,11 +305,16 @@ pub fn load_object(name: &CStr, args: &[*const u8]) -> usize {
     let dynamic_table = elf.elf_dynamic_table().unwrap();
     for dynamic in dynamic_table.iter() {
         if dynamic.tag == elf::DT_NEEDED {
-            let name = dynamic_table.string(dynamic).unwrap();
-            let name = str::from_utf8(name).unwrap();
-            if !try_load_wrapped(name, &mut object_pool.symbol_table) {
-                unimplemented!("loading library {}", name);
-            }
+            let name_bytes = dynamic_table.string(dynamic).unwrap();
+            if !object_pool
+                .wrapped_libs
+                .iter()
+                .any(|lib| lib.path.as_bytes().ends_with(name_bytes))
+            {
+                let name = CString::new(name_bytes.to_vec()).unwrap();
+                let wrapped_lib = WrappedLib::try_load(&name).unwrap();
+                object_pool.wrapped_libs.push(wrapped_lib);
+            };
         }
     }
 
@@ -328,7 +329,7 @@ pub fn load_object(name: &CStr, args: &[*const u8]) -> usize {
     }
 
     // Apply relocations
-    resolve_relocations(&elf, base_addr as *mut u8, &object_pool.symbol_table);
+    resolve_relocations(&mut object_pool, &elf, base_addr as *mut u8);
 
     // Collect initialization and finalization functions
     let (init_array, fini_array) = collect_init_fini(&elf, base_addr);
@@ -354,7 +355,6 @@ pub fn load_object(name: &CStr, args: &[*const u8]) -> usize {
             let addr = symbol.st_value(elf.endianness()) as usize;
 
             object_pool
-                .symbol_table
                 .global_symbols
                 .insert(name, unsafe { base_addr.add(addr) });
         }
@@ -372,5 +372,5 @@ pub fn load_object(name: &CStr, args: &[*const u8]) -> usize {
 
 pub fn get_symbol(name: &CStr) -> Option<*const u8> {
     let object_pool = OBJECT_POOL.lock().unwrap();
-    object_pool.symbol_table.global_symbols.get(name).cloned()
+    object_pool.global_symbols.get(name).cloned()
 }

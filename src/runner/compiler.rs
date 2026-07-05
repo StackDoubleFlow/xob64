@@ -52,11 +52,10 @@ fn assemble_instrs(instrs: &[Instruction], ip: u64) -> BlockEncoderResult {
     .unwrap()
 }
 
-fn finalize_ass(
+pub fn finalize_ass(
     exec_pool: &mut ExecPool,
     mut ass: CodeAssembler,
-    x86_idxs: &[usize],
-) -> CompiledChunk {
+) -> (*mut u8, BlockEncoderResult) {
     let instrs = ass.take_instructions();
 
     if exec_pool.current_alloc.is_null() {
@@ -85,7 +84,15 @@ fn finalize_ass(
         unsafe { std::slice::from_raw_parts_mut(target_addr, enc_result.code_buffer.len()) };
     target_slice.copy_from_slice(&enc_result.code_buffer);
     exec_pool.current_alloc_utilization += enc_result.code_buffer.len();
+    (target_addr, enc_result)
+}
 
+fn finalize_chunk(
+    exec_pool: &mut ExecPool,
+    ass: CodeAssembler,
+    x86_idxs: &[usize],
+) -> CompiledChunk {
+    let (target_addr, enc_result) = finalize_ass(exec_pool, ass);
     let mut instr_map = Vec::new();
     for arm_idx in 0..CHUNK_SIZE / 4 {
         let x86_idx = x86_idxs[arm_idx];
@@ -174,7 +181,7 @@ pub fn compile_chunk(exec_pool: &mut ExecPool, chunk_addr: usize) -> CompiledChu
     )
     .unwrap();
 
-    let compiled_chunk = finalize_ass(exec_pool, ass, &x86_idxs);
+    let compiled_chunk = finalize_chunk(exec_pool, ass, &x86_idxs);
     dump::dump_translation(chunk_addr, &compiled_chunk);
     compiled_chunk
 }
