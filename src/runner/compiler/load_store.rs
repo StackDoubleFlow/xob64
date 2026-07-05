@@ -35,10 +35,16 @@ fn process_addr_mode(
     alternate_indirect: bool,
     alt_blockers: &[RegTranslation],
 ) -> IcedResult<AddrModeInfo> {
+    let mut reg_offset = None;
     let (base_reg, imm) = match mem_operand {
         bad64::Operand::MemOffset { reg, offset, .. } => (reg, offset),
         bad64::Operand::MemPreIdx { reg, imm } => (reg, imm),
         bad64::Operand::MemPostIdxImm { reg, imm } => (reg, imm),
+        bad64::Operand::MemExt { regs, shift, .. } => {
+            assert!(shift.is_none());
+            reg_offset = Some(regs[1]);
+            (regs[0], bad64::Imm::Unsigned(0))
+        }
         _ => todo!("memory address operand: {:?}", mem_operand),
     };
     let imm = any_offset_sign(imm);
@@ -46,7 +52,26 @@ fn process_addr_mode(
 
     let mut pop_base_reg = false;
     let new_base_reg = match reg_translation {
-        RegTranslation::Direct(reg) => reg,
+        RegTranslation::Direct(reg) => {
+            if reg_offset.is_some() {
+                if alternate_indirect {
+                    let alt_reg = get_alt_reg(alt_blockers);
+                    ass.add_instruction(Instruction::with1(Code::Push_r64, alt_reg)?)?;
+                    pop_base_reg = true;
+                    ass.add_instruction(Instruction::with2(Code::Mov_r64_rm64, alt_reg, reg)?)?;
+                    alt_reg
+                } else {
+                    ass.add_instruction(Instruction::with2(
+                        Code::Mov_r64_rm64,
+                        Register::RAX,
+                        reg,
+                    )?)?;
+                    Register::RAX
+                }
+            } else {
+                reg
+            }
+        }
         RegTranslation::Indirect(indirect_offset) => {
             if alternate_indirect {
                 // We have a situation where both the offset and store value are indirect.
@@ -67,6 +92,13 @@ fn process_addr_mode(
         }
         RegTranslation::Zero => unreachable!(),
     };
+
+    if let Some(reg_offset) = reg_offset {
+        let (reg_offset, _) = translate_reg(reg_offset);
+        let mut add = Instruction::with2(Code::Add_r64_rm64, new_base_reg, Register::None)?;
+        reg_offset.set_operand(&mut add, 1);
+        ass.add_instruction(add)?;
+    }
 
     let mut addr_mode_info = AddrModeInfo {
         base_reg: new_base_reg,
@@ -89,6 +121,7 @@ fn process_addr_mode(
             addr_mode_info.post_index_offset = Some(imm);
             addr_mode_info.write_back_base_reg = true;
         }
+        bad64::Operand::MemExt { .. } => {}
         _ => unreachable!(),
     }
 
