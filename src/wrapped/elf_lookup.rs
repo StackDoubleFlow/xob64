@@ -148,9 +148,6 @@ impl SymbolFinder {
             self.hash_table.buckets()[bucket_idx as usize] - self.hash_table.header.symoffset;
         loop {
             let chain_hash = unsafe { self.hash_table.chain_at(chain_idx as usize) };
-            if (chain_hash & 1) == 1 {
-                return None;
-            }
             if chain_hash >> 1 == hash >> 1 {
                 let sym_idx = chain_idx + self.hash_table.header.symoffset;
                 let sym = self.symtab.wrapping_add(sym_idx as usize);
@@ -160,6 +157,9 @@ impl SymbolFinder {
                 if sym_name == name {
                     return Some(sym);
                 }
+            }
+            if (chain_hash & 1) == 1 {
+                return None;
             }
             chain_idx += 1;
         }
