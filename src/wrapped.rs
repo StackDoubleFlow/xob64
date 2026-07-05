@@ -58,7 +58,7 @@ impl WrappedLib {
             if (bind == elf::STB_GLOBAL || bind == elf::STB_WEAK) && sym.st_shndx != elf::SHN_UNDEF
             {
                 let addr = sym.st_value + self.base_addr;
-                let addr = if ty == elf::STT_FUNC {
+                let addr = if ty == elf::STT_FUNC || ty == elf::STT_GNU_IFUNC {
                     create_lib_proxy(addr).unwrap()
                 } else {
                     addr as _

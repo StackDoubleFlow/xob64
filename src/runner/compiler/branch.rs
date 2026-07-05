@@ -156,7 +156,6 @@ pub fn compile_instr(
         }
         Op::BR => make_indirect_jump(ass, operands[0])?,
         Op::BLR => {
-            ass.int3()?;
             // Load link register
             ass.mov(gpr64::r11, arm_instr.address() + 4)?;
             // Push shadow stack
@@ -165,7 +164,6 @@ pub fn compile_instr(
             make_indirect_jump(ass, operands[0])?;
             ass.anonymous_label()?;
             ass.zero_bytes()?;
-            ass.int3()?;
         }
         Op::CBZ | Op::CBNZ => handle_cbz_cbnz(arm_instr, ass, exec_pool, chunk_addr)?,
         Op::RET => {

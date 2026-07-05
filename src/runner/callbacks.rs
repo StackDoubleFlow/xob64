@@ -99,15 +99,16 @@ resumable_landing_pad!(indirect_jump_landing_pad, indirect_jump);
 extern "C" fn indirect_jump(ctx: *mut ExecCtx, ret_ptr: *const u8) -> u64 {
     let ctx = unsafe { &*ctx };
 
-    let ret_addr = get_exec(ctx.param as *const u8);
+    let target_addr = get_exec(ctx.param as *const u8);
+    dbg!(ret_ptr, target_addr);
 
     // 12 is the length of the mov + call
     let call_ptr = ret_ptr.wrapping_sub(12);
     eprintln!(
         "indirect jump at {:?} to {:#x} -> {:#x}",
-        call_ptr, ctx.param, ret_addr as u64
+        call_ptr, ctx.param, target_addr as u64
     );
-    ret_addr as u64
+    target_addr as u64
 }
 
 resumable_landing_pad!(end_of_chunk_landing_pad, end_of_chunk);
