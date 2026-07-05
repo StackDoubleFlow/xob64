@@ -144,8 +144,11 @@ impl SymbolFinder {
             return None;
         }
         let bucket_idx = hash % self.hash_table.header.nbuckets;
-        let mut chain_idx =
-            self.hash_table.buckets()[bucket_idx as usize] - self.hash_table.header.symoffset;
+        let mut chain_idx = self.hash_table.buckets()[bucket_idx as usize];
+        if chain_idx < self.hash_table.header.symoffset {
+            return None;
+        }
+        chain_idx -= self.hash_table.header.symoffset;
         loop {
             let chain_hash = unsafe { self.hash_table.chain_at(chain_idx as usize) };
             if chain_hash >> 1 == hash >> 1 {
