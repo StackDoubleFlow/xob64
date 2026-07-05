@@ -65,6 +65,9 @@ pub fn load_indirect(
     match reg_class {
         RegClass::GPR32 => ass.mov(gpr32::eax, mem),
         RegClass::GPR64 => ass.mov(gpr64::rax, mem),
+        RegClass::FP128 => ass.movaps(xmm::xmm15, mem),
+        RegClass::FP64 => ass.movsd_2(xmm::xmm15, mem),
+        RegClass::FP32 => ass.movss(xmm::xmm15, mem),
         _ => todo!(),
     }
 }
@@ -78,6 +81,7 @@ pub fn store_indirect(
     match reg_class {
         RegClass::GPR32 => ass.mov(mem, gpr32::eax),
         RegClass::GPR64 => ass.mov(mem, gpr64::rax),
+        RegClass::FP128 => ass.movaps(mem, xmm::xmm15),
         RegClass::FP64 => ass.movsd_2(mem, xmm::xmm15),
         RegClass::FP32 => ass.movss(mem, xmm::xmm15),
         _ => todo!(),

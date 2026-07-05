@@ -1,4 +1,7 @@
-use iced_x86::{Instruction, OpKind, Register, code_asm::CodeAssembler};
+use iced_x86::{
+    Instruction, OpKind, Register,
+    code_asm::{CodeAssembler, gpr32},
+};
 use num_traits::FromPrimitive;
 
 use crate::runner::{
@@ -41,11 +44,12 @@ pub enum RegTranslation {
     Direct(Register),
     // The register is stored at `offset` in the exec context
     Indirect(u32),
+    Zero,
 }
 
 impl RegTranslation {
     pub fn is_indirect(&self) -> bool {
-        matches!(self, RegTranslation::Indirect(_))
+        matches!(self, RegTranslation::Indirect(_) | RegTranslation::Zero)
     }
 
     pub fn set_operand(self, instr: &mut Instruction, idx: u32) {
@@ -60,6 +64,7 @@ impl RegTranslation {
                 instr.set_memory_displacement32(offset);
                 instr.set_memory_displ_size(1);
             }
+            RegTranslation::Zero => unimplemented!(),
         }
     }
 
@@ -67,13 +72,14 @@ impl RegTranslation {
         match self {
             RegTranslation::Direct(_) => Ok(()),
             RegTranslation::Indirect(offset) => load_indirect(ass, reg_class, offset),
+            RegTranslation::Zero => ass.xor(gpr32::eax, gpr32::eax),
         }
     }
 
     fn reg_operand(&self, reg_class: RegClass) -> Register {
         match self {
             RegTranslation::Direct(reg) => *reg,
-            RegTranslation::Indirect(_) => reg_class.scratch(),
+            RegTranslation::Indirect(_) | RegTranslation::Zero => reg_class.scratch(),
         }
     }
 
@@ -97,7 +103,7 @@ impl RegTranslation {
 
     pub fn post_write(self, ass: &mut CodeAssembler, reg_class: RegClass) -> IcedResult<()> {
         match self {
-            RegTranslation::Direct(_) => Ok(()),
+            RegTranslation::Direct(_) | RegTranslation::Zero => Ok(()),
             RegTranslation::Indirect(offset) => store_indirect(ass, reg_class, offset),
         }
     }
@@ -130,11 +136,11 @@ impl RegClass {
 pub fn get_reg_class(reg: bad64::Reg) -> (RegClass, bad64::Reg) {
     use bad64::Reg;
     let rn = reg as u32;
-    if reg == Reg::SP || rn >= Reg::X0 as u32 && rn <= Reg::X30 as u32 {
+    if reg == Reg::SP || rn >= Reg::X0 as u32 && rn <= Reg::XZR as u32 {
         (RegClass::GPR64, reg)
     } else if reg == Reg::WSP {
         (RegClass::GPR32, Reg::SP)
-    } else if rn >= Reg::W0 as u32 && rn <= Reg::W30 as u32 {
+    } else if rn >= Reg::W0 as u32 && rn <= Reg::WZR as u32 {
         (
             RegClass::GPR32,
             Reg::from_u32(rn - Reg::W0 as u32 + Reg::X0 as u32).unwrap(),
@@ -201,6 +207,8 @@ fn translate_indirect_reg(reg: bad64::Reg) -> RegTranslation {
         Indirect(fp_offset + (rn - X8 as u32) * 16)
     } else if rn >= Q23 as u32 && rn <= Q31 as u32 {
         Indirect(fp_offset + (rn - X8 as u32 + 8) * 16)
+    } else if reg == bad64::Reg::XZR {
+        RegTranslation::Zero
     } else {
         unimplemented!("translating reg: {:?}", reg)
     }
