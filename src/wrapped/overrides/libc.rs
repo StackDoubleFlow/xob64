@@ -8,8 +8,11 @@ use crate::{
 pub fn get_overrides() -> HashMap<&'static CStr, *const u8> {
     let mut overrides = HashMap::new();
     overrides.insert(c"__libc_start_main", __libc_start_main as _);
+    overrides.insert(c"__stack_chk_guard", &raw mut __STACK_CHK_GUARD as _);
     overrides
 }
+
+static mut __STACK_CHK_GUARD: u64 = 0;
 
 wrapped_landing_pad!(__libc_start_main, __libc_start_main_impl);
 extern "C" fn __libc_start_main_impl(main_fn: *const u8, argc: u32, argv: *const *const u8) {

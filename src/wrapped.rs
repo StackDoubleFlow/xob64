@@ -42,13 +42,13 @@ impl WrappedLib {
     }
 
     pub fn get_symbol(&self, name: &CStr) -> Option<*const u8> {
+        if let Some(&ov) = self.overrides.get(name) {
+            return Some(ov);
+        }
+
         let addr = unsafe { nix::libc::dlsym(self.handle, name.as_ptr()) };
         if addr.is_null() {
             return None;
-        }
-
-        if let Some(&ov) = self.overrides.get(name) {
-            return Some(ov);
         }
 
         if let Some(sym) = self.symbol_finder.lookup(name) {
