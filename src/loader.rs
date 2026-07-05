@@ -45,6 +45,7 @@ impl ObjectPool {
 struct EmuObject {
     base_ptr: *const u8,
     fini_array: Vec<*const u8>,
+    entry: Option<*const u8>,
 }
 
 // impl SymbolTable {
@@ -189,7 +190,12 @@ fn generate_suitable_base_addr(elf: &ElfFile64) -> *const u8 {
     base_addr as *const u8
 }
 
-fn resolve_relocations(obj_pool: &mut ObjectPool, elf: &ElfFile64, base_addr: *mut u8) {
+fn resolve_relocations(
+    obj_pool: &mut ObjectPool,
+    elf: &ElfFile64,
+    base_addr: *mut u8,
+    local_symbols: HashMap<CString, *const u8>,
+) {
     let write_u64 = |addr: u64, value: u64| unsafe {
         *base_addr.add(addr as usize).cast() = value;
     };
@@ -204,7 +210,7 @@ fn resolve_relocations(obj_pool: &mut ObjectPool, elf: &ElfFile64, base_addr: *m
                 let value = base_addr as u64 + reloc.addend() as u64;
                 write_u64(addr, value);
             }
-            elf::R_AARCH64_GLOB_DAT => {
+            elf::R_AARCH64_GLOB_DAT | elf::R_AARCH64_JUMP_SLOT => {
                 let symbol_idx = match reloc.target() {
                     RelocationTarget::Symbol(idx) => idx,
                     _ => unreachable!(),
@@ -219,24 +225,11 @@ fn resolve_relocations(obj_pool: &mut ObjectPool, elf: &ElfFile64, base_addr: *m
                 }
                 let name_bytes = symbol.name_bytes().unwrap();
                 let name = CString::new(name_bytes).unwrap();
-                write_u64(addr, obj_pool.get_symbol(&name) as u64);
-            }
-            elf::R_AARCH64_JUMP_SLOT => {
-                let symbol_idx = match reloc.target() {
-                    RelocationTarget::Symbol(idx) => idx,
-                    _ => unreachable!(),
+                let val = match local_symbols.get(&name) {
+                    Some(&val) => val as u64,
+                    None => obj_pool.get_symbol(&name) as u64,
                 };
-                let symbol = elf
-                    .dynamic_symbol_table()
-                    .unwrap()
-                    .symbol_by_index(symbol_idx)
-                    .unwrap();
-                if symbol.is_weak() {
-                    continue;
-                }
-                let name_bytes = symbol.name_bytes().unwrap();
-                let name = CString::new(name_bytes).unwrap();
-                write_u64(addr, obj_pool.get_symbol(&name) as u64);
+                write_u64(addr, val);
             }
             _ => {
                 unimplemented!("Relocation: {:#?}", reloc);
@@ -341,37 +334,46 @@ pub fn load_object(name: &CStr, args: &[*const u8]) -> usize {
         }
     }
 
+    let mut local_symbols = HashMap::new();
+    for symbol in elf.elf_dynamic_symbol_table().symbols() {
+        let shndx = symbol.st_shndx(elf.endianness());
+        let bind = symbol.st_bind();
+        let other = symbol.st_other();
+        if shndx != elf::SHN_UNDEF && other == elf::STV_DEFAULT {
+            let name_bytes = symbol
+                .name(elf.endianness(), elf.elf_dynamic_symbol_table().strings())
+                .unwrap();
+            let name = CString::new(name_bytes.to_vec()).unwrap();
+
+            let offset = symbol.st_value(elf.endianness()) as usize;
+            let addr = base_addr.wrapping_add(offset);
+
+            if bind == elf::STB_GLOBAL || bind == elf::STB_WEAK {
+                object_pool.global_symbols.insert(name, addr);
+            } else if bind == elf::STB_LOCAL {
+                local_symbols.insert(name, addr);
+            }
+        }
+    }
+
     // Apply relocations
-    resolve_relocations(&mut object_pool, &elf, base_addr as *mut u8);
+    resolve_relocations(&mut object_pool, &elf, base_addr as *mut u8, local_symbols);
 
     // Collect initialization and finalization functions
     let (init_array, fini_array) = collect_init_fini(&elf, base_addr);
+
+    let entry = if elf.entry() != 0 {
+        Some(base_addr.wrapping_add(elf.entry() as usize) as _)
+    } else {
+        None
+    };
 
     let idx = object_pool.objects.len();
     object_pool.objects.push(EmuObject {
         base_ptr: base_addr,
         fini_array,
+        entry,
     });
-
-    for symbol in elf.elf_symbol_table().symbols() {
-        let shndx = symbol.st_shndx(elf.endianness());
-        let bind = symbol.st_bind();
-        let other = symbol.st_other();
-        if shndx != elf::SHN_UNDEF
-            && (bind == elf::STB_GLOBAL || bind == elf::STB_WEAK)
-            && other == elf::STV_DEFAULT
-        {
-            let name_bytes = symbol
-                .name(elf.endianness(), elf.elf_symbol_table().strings())
-                .unwrap();
-            let name = CString::new(name_bytes.to_vec()).unwrap();
-            let addr = symbol.st_value(elf.endianness()) as usize;
-
-            object_pool
-                .global_symbols
-                .insert(name, unsafe { base_addr.add(addr) });
-        }
-    }
 
     // Release the lock
     drop(object_pool);
@@ -383,7 +385,7 @@ pub fn load_object(name: &CStr, args: &[*const u8]) -> usize {
     idx
 }
 
-pub fn get_symbol(name: &CStr) -> Option<*const u8> {
+pub fn get_entry(object_idx: usize) -> Option<*const u8> {
     let object_pool = OBJECT_POOL.lock().unwrap();
-    object_pool.global_symbols.get(name).cloned()
+    object_pool.objects[object_idx].entry
 }

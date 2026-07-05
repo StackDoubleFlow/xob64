@@ -17,7 +17,7 @@ fn main() {
         })
         .collect();
 
-    loader::load_object(&exec_name, &args);
-    let start_sym = loader::get_symbol(c"_start").expect("could not find _start symbol");
-    runner::call(start_sym, &args);
+    let obj_idx = loader::load_object(&exec_name, &args);
+    let entry = loader::get_entry(obj_idx).expect("could not find program entry");
+    runner::call(entry, &args);
 }
