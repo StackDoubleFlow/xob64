@@ -7,7 +7,7 @@ use crate::runner::compiler::{
         get_alt_reg, get_shamt_from_shift, label_target, make_mov_ri64, make_mov_rr, make_ri,
         make_rr,
     },
-    register::{RegClass, RegTranslation, translate_reg, unwrap_reg},
+    register::{NativeRegClass, RegClass, RegTranslation, translate_reg, unwrap_reg},
 };
 
 // Given `ORR dest, src1, src2`
@@ -120,13 +120,23 @@ fn load_shifted(
         // In these cases, src_class and dest_class are always the same
         Shift::LSL(_) | Shift::LSR(_) | Shift::ASR(_) => (Code::Mov_r64_rm64, Code::Mov_r32_rm32),
     };
+    let native_src_class = match shift {
+        Shift::UXTB(_) | Shift::SXTB(_) => NativeRegClass::GPR8,
+        Shift::UXTH(_) | Shift::SXTH(_) => NativeRegClass::GPR16,
+        Shift::UXTW(_) | Shift::SXTW(_) => NativeRegClass::GPR32,
+        Shift::UXTX(_) | Shift::SXTX(_) | Shift::LSL(_) | Shift::LSR(_) | Shift::ASR(_) => {
+            src_class.to_native_class()
+        }
+        _ => unreachable!(),
+    };
     let mov_code = match dest_class {
         RegClass::GPR64 => mov_64,
         RegClass::GPR32 => mov_32,
         _ => unreachable!(),
     };
     let mut mov = Instruction::with2(mov_code, dest, Register::None)?;
-    src.set_operand(&mut mov, 1);
+    src.with_native_class(native_src_class)
+        .set_operand(&mut mov, 1);
     ass.add_instruction(mov)?;
 
     let shamt = get_shamt_from_shift(shift);

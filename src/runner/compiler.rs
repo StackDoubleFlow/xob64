@@ -121,7 +121,6 @@ pub fn compile_instr(
         make_call(ass, callbacks::invalid_arm_instr as *const () as u64)?;
         return Ok(());
     };
-    println!("{}", arm_instr);
 
     // Load and store instructions
     if load_store::compile_instr(arm_instr, ass)? {

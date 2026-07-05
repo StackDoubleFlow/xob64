@@ -107,6 +107,15 @@ impl RegTranslation {
             RegTranslation::Indirect(offset) => store_indirect(ass, reg_class, offset),
         }
     }
+
+    pub fn with_native_class(self, native_class: NativeRegClass) -> Self {
+        match self {
+            RegTranslation::Direct(reg) => {
+                RegTranslation::Direct(lower_reg_to_native_class(reg.full_register(), native_class))
+            }
+            _ => self,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -120,6 +129,13 @@ pub enum RegClass {
     FP8,
 }
 
+pub enum NativeRegClass {
+    GPR64,
+    GPR32,
+    GPR16,
+    GPR8,
+}
+
 impl RegClass {
     pub fn scratch(self) -> Register {
         match self {
@@ -128,6 +144,14 @@ impl RegClass {
             RegClass::FP128 | RegClass::FP64 | RegClass::FP32 | RegClass::FP16 | RegClass::FP8 => {
                 Register::XMM15
             }
+        }
+    }
+
+    pub fn to_native_class(self) -> NativeRegClass {
+        match self {
+            RegClass::GPR64 => NativeRegClass::GPR64,
+            RegClass::GPR32 => NativeRegClass::GPR32,
+            _ => todo!(),
         }
     }
 }
@@ -172,23 +196,48 @@ pub fn get_reg_class(reg: bad64::Reg) -> (RegClass, bad64::Reg) {
     }
 }
 
-pub fn lower_reg_to_class(reg: Register, class: RegClass) -> Register {
+pub fn lower_reg_to_native_class(reg: Register, class: NativeRegClass) -> Register {
     let rn = reg as u32;
     match class {
-        RegClass::GPR64 => {
+        NativeRegClass::GPR64 => {
             if rn >= Register::RAX as u32 && rn <= Register::R15 as u32 {
                 reg
             } else {
                 panic!("Tried to lower {:?} to GPR64", reg);
             }
         }
-        RegClass::GPR32 => {
+        NativeRegClass::GPR32 => {
             if rn >= Register::RAX as u32 && rn <= Register::R15 as u32 {
                 reg.full_register32()
             } else {
-                panic!("Tried to lower {:?} to GPR64", reg);
+                panic!("Tried to lower {:?} to GPR32", reg);
             }
         }
+        NativeRegClass::GPR16 => {
+            if rn >= Register::RAX as u32 && rn <= Register::R15 as u32 {
+                reg - Register::RAX as u32 + Register::AX as u32
+            } else {
+                panic!("Tried to lower {:?} to GPR16", reg);
+            }
+        }
+        NativeRegClass::GPR8 => {
+            if rn >= Register::RAX as u32 && rn <= Register::R15 as u32 {
+                if rn <= Register::BL as u32 {
+                    reg - Register::RAX as u32 + Register::AL as u32
+                } else {
+                    reg - Register::RAX as u32 + Register::SPL as u32
+                }
+            } else {
+                panic!("Tried to lower {:?} to GPR8", reg);
+            }
+        }
+    }
+}
+
+pub fn lower_reg_to_class(reg: Register, class: RegClass) -> Register {
+    match class {
+        RegClass::GPR64 => lower_reg_to_native_class(reg, NativeRegClass::GPR64),
+        RegClass::GPR32 => lower_reg_to_native_class(reg, NativeRegClass::GPR32),
         // These all have the same register names in x86_64, just the instruction changes
         RegClass::FP128 | RegClass::FP64 | RegClass::FP32 | RegClass::FP16 | RegClass::FP8 => reg,
     }
