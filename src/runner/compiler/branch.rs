@@ -115,6 +115,22 @@ fn push_shadow_stack(ass: &mut CodeAssembler, label: CodeLabel, reg: Register) -
     Ok(())
 }
 
+fn make_indirect_jump(ass: &mut CodeAssembler, reg: bad64::Operand) -> IcedResult<()> {
+    let (src, _) = translate_reg(unwrap_reg(reg));
+    src.pre_read(ass, RegClass::GPR64)?;
+    let mut mov = Instruction::with2(
+        Code::Mov_rm64_r64,
+        MemoryOperand::with_base_displ(Register::R15, std::mem::offset_of!(ExecCtx, param) as i64),
+        Register::None,
+    )?;
+    src.set_reg_operand(&mut mov, 1, RegClass::GPR64);
+    ass.add_instruction(mov)?;
+    make_call(
+        ass,
+        callbacks::indirect_jump_landing_pad as *const u8 as u64,
+    )
+}
+
 // Returns true if the instruction was successfully translated.
 pub fn compile_instr(
     arm_instr: &bad64::Instruction,
@@ -138,25 +154,20 @@ pub fn compile_instr(
             ass.anonymous_label()?;
             ass.zero_bytes()?;
         }
-        Op::CBZ | Op::CBNZ => handle_cbz_cbnz(arm_instr, ass, exec_pool, chunk_addr)?,
-        Op::BR => {
-            let (src, _) = translate_reg(unwrap_reg(operands[0]));
-            src.pre_read(ass, RegClass::GPR64)?;
-            let mut mov = Instruction::with2(
-                Code::Mov_rm64_r64,
-                MemoryOperand::with_base_displ(
-                    Register::R15,
-                    std::mem::offset_of!(ExecCtx, param) as i64,
-                ),
-                Register::None,
-            )?;
-            src.set_reg_operand(&mut mov, 1, RegClass::GPR64);
-            ass.add_instruction(mov)?;
-            make_call(
-                ass,
-                callbacks::indirect_jump_landing_pad as *const u8 as u64,
-            )?;
+        Op::BR => make_indirect_jump(ass, operands[0])?,
+        Op::BLR => {
+            ass.int3()?;
+            // Load link register
+            ass.mov(gpr64::r11, arm_instr.address() + 4)?;
+            // Push shadow stack
+            let ret_label = ass.fwd()?;
+            push_shadow_stack(ass, ret_label, Register::R11)?;
+            make_indirect_jump(ass, operands[0])?;
+            ass.anonymous_label()?;
+            ass.zero_bytes()?;
+            ass.int3()?;
         }
+        Op::CBZ | Op::CBNZ => handle_cbz_cbnz(arm_instr, ass, exec_pool, chunk_addr)?,
         Op::RET => {
             let shadow_sp = ptr(gpr64::r15 + ExecCtx::SHADOW_SP_OFFSET);
             ass.push(gpr64::r10)?;
