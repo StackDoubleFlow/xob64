@@ -293,6 +293,27 @@ fn collect_init_fini(elf: &ElfFile64, base_ptr: *const u8) -> (Vec<*const u8>, V
     (init_array, fini_array)
 }
 
+fn handle_needed(object_pool: &mut ObjectPool, name_bytes: &[u8]) {
+    if object_pool
+        .wrapped_libs
+        .iter()
+        .any(|lib| lib.path.as_bytes().ends_with(name_bytes))
+    {
+        return;
+    }
+
+    let name = CString::new(name_bytes.to_vec()).unwrap();
+
+    if let Ok(name) = name.to_str()
+        && name.starts_with("ld-linux-aarch64.so")
+    {
+        return;
+    }
+
+    let wrapped_lib = WrappedLib::try_load(&name).unwrap();
+    object_pool.wrapped_libs.push(wrapped_lib);
+}
+
 pub fn load_object(name: &CStr, args: &[*const u8]) -> usize {
     let name = OsStr::from_bytes(name.to_bytes());
     let mut object_pool = OBJECT_POOL.lock().unwrap();
@@ -306,15 +327,7 @@ pub fn load_object(name: &CStr, args: &[*const u8]) -> usize {
     for dynamic in dynamic_table.iter() {
         if dynamic.tag == elf::DT_NEEDED {
             let name_bytes = dynamic_table.string(dynamic).unwrap();
-            if !object_pool
-                .wrapped_libs
-                .iter()
-                .any(|lib| lib.path.as_bytes().ends_with(name_bytes))
-            {
-                let name = CString::new(name_bytes.to_vec()).unwrap();
-                let wrapped_lib = WrappedLib::try_load(&name).unwrap();
-                object_pool.wrapped_libs.push(wrapped_lib);
-            };
+            handle_needed(&mut object_pool, name_bytes);
         }
     }
 
