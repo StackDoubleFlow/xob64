@@ -7,8 +7,8 @@ use crate::runner::compiler::{
     instr_utils::{
         IcedResult, OpRICodes, OpRRCodes,
         codes::{
-            ADD_RR_CODES, AND_RI_CODES, CMP_RI_CODES, MOV_RI_CODES, OR_RI_CODES, SUB_RI_CODES,
-            SUB_RR_CODES,
+            ADD_RI_CODES, ADD_RR_CODES, AND_RI_CODES, CMP_RI_CODES, MOV_RI_CODES, OR_RI_CODES,
+            SUB_RI_CODES, SUB_RR_CODES,
         },
         get_alt_reg, get_shamt_from_shift, label_target, make_cmp_rr, make_mov_ri64, make_mov_rr,
         make_ri, make_rr,
@@ -356,28 +356,43 @@ fn translate_shift(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) -> I
     Ok(())
 }
 
+fn translate_cmp_cmn(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) -> IcedResult<()> {
+    let operands = arm_instr.operands();
+    let (src1, reg_class) = translate_reg(unwrap_reg(operands[0]));
+    match operands[1] {
+        bad64::Operand::Reg { reg: src2, .. } => {
+            let (src2, _) = translate_reg(src2);
+            if arm_instr.op() == bad64::Op::CMP {
+                make_cmp_rr(ass, reg_class, src1, src2)?;
+            } else {
+                let scratch = RegTranslation::Direct(reg_class.scratch());
+                make_mov_rr(ass, reg_class, scratch, src1)?;
+                make_rr(ass, &ADD_RR_CODES, reg_class, scratch, src2)?;
+            }
+        }
+        bad64::Operand::Imm64 { imm, .. } | bad64::Operand::Imm32 { imm, .. } => {
+            let imm = unwrap_unsigned(imm);
+            if arm_instr.op() == bad64::Op::CMP {
+                make_ri(ass, &CMP_RI_CODES, reg_class, src1, imm as i32)?;
+            } else {
+                let scratch = RegTranslation::Direct(reg_class.scratch());
+                make_mov_rr(ass, reg_class, scratch, src1)?;
+                make_ri(ass, &ADD_RI_CODES, reg_class, scratch, imm as i32)?;
+            }
+        }
+        operand => todo!("operand: {:?}", operand),
+    }
+
+    Ok(())
+}
+
 // Returns true if the instruction was successfully translated.
 pub fn compile_instr(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) -> IcedResult<bool> {
     use bad64::Op;
     let operands = arm_instr.operands();
     match arm_instr.op() {
         Op::NOP => ass.nop()?,
-        Op::CMP => {
-            let (src1, reg_class) = translate_reg(unwrap_reg(operands[0]));
-            match operands[1] {
-                bad64::Operand::Reg { reg: src2, .. } => {
-                    let (src2, _) = translate_reg(src2);
-                    make_cmp_rr(ass, reg_class, src1, src2)?;
-                }
-                bad64::Operand::Imm64 { imm, .. } | bad64::Operand::Imm32 { imm, .. } => {
-                    let bad64::Imm::Unsigned(imm) = imm else {
-                        unreachable!()
-                    };
-                    make_ri(ass, &CMP_RI_CODES, reg_class, src1, imm as i32)?;
-                }
-                operand => todo!("operand: {:?}", operand),
-            }
-        }
+        Op::CMP | Op::CMN => translate_cmp_cmn(arm_instr, ass)?,
         Op::MOV => {
             let dest = unwrap_reg(operands[0]);
             let (dest_translation, reg_class) = translate_reg(dest);
