@@ -27,6 +27,8 @@ pub mod codes {
         OpRRCodes::new(Cmp_r32_rm32, Cmp_rm32_r32, Cmp_r64_rm64, Cmp_rm64_r64);
     pub const CMP_RI_CODES: OpRICodes = OpRICodes::new(Cmp_rm32_imm32, Cmp_rm64_imm32);
 
+    pub const AND_RR_CODES: OpRRCodes =
+        OpRRCodes::new(And_r32_rm32, And_rm32_r32, And_r64_rm64, And_rm64_r64);
     pub const AND_RI_CODES: OpRICodes = OpRICodes::new(And_rm32_imm32, And_rm64_imm32);
 
     pub const OR_RI_CODES: OpRICodes = OpRICodes::new(Or_rm32_imm32, Or_rm64_imm32);

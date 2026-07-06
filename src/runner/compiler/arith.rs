@@ -7,8 +7,8 @@ use crate::runner::compiler::{
     instr_utils::{
         IcedResult, OpRICodes, OpRRCodes,
         codes::{
-            ADD_RI_CODES, ADD_RR_CODES, AND_RI_CODES, CMP_RI_CODES, MOV_RI_CODES, OR_RI_CODES,
-            SUB_RI_CODES, SUB_RR_CODES,
+            ADD_RI_CODES, ADD_RR_CODES, AND_RI_CODES, AND_RR_CODES, CMP_RI_CODES, MOV_RI_CODES,
+            OR_RI_CODES, SUB_RI_CODES, SUB_RR_CODES,
         },
         get_alt_reg, get_shamt_from_shift, label_target, make_cmp_rr, make_mov_ri64, make_mov_rr,
         make_ri, make_rr,
@@ -365,7 +365,7 @@ fn translate_cmp_cmn(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) ->
             if arm_instr.op() == bad64::Op::CMP {
                 make_cmp_rr(ass, reg_class, src1, src2)?;
             } else {
-                let scratch = RegTranslation::Direct(reg_class.scratch());
+                let scratch = reg_class.scratch_translation();
                 make_mov_rr(ass, reg_class, scratch, src1)?;
                 make_rr(ass, &ADD_RR_CODES, reg_class, scratch, src2)?;
             }
@@ -375,7 +375,7 @@ fn translate_cmp_cmn(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) ->
             if arm_instr.op() == bad64::Op::CMP {
                 make_ri(ass, &CMP_RI_CODES, reg_class, src1, imm as i32)?;
             } else {
-                let scratch = RegTranslation::Direct(reg_class.scratch());
+                let scratch = reg_class.scratch_translation();
                 make_mov_rr(ass, reg_class, scratch, src1)?;
                 make_ri(ass, &ADD_RI_CODES, reg_class, scratch, imm as i32)?;
             }
@@ -394,20 +394,41 @@ pub fn compile_instr(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) ->
         Op::NOP => ass.nop()?,
         Op::CMP | Op::CMN => translate_cmp_cmn(arm_instr, ass)?,
         Op::MOV => {
-            let dest = unwrap_reg(operands[0]);
-            let (dest_translation, reg_class) = translate_reg(dest);
+            let (dest, reg_class) = translate_reg(unwrap_reg(operands[0]));
 
             match operands[1] {
                 bad64::Operand::Reg { reg: src, .. } => {
                     let (src_translation, _) = translate_reg(src);
-                    make_mov_rr(ass, reg_class, dest_translation, src_translation)?;
+                    make_mov_rr(ass, reg_class, dest, src_translation)?;
                 }
                 bad64::Operand::Imm64 { imm, .. } | bad64::Operand::Imm32 { imm, .. } => {
                     // The immediate is really encoded in 16 bits, so this cast is ok
                     let imm = unwrap_unsigned(imm) as i32;
-                    make_ri(ass, &MOV_RI_CODES, reg_class, dest_translation, imm)?;
+                    make_ri(ass, &MOV_RI_CODES, reg_class, dest, imm)?;
                 }
                 operand => todo!("operand: {:?}", operand),
+            }
+        }
+        Op::AND => {
+            let (dest, reg_class) = translate_reg(unwrap_reg(operands[0]));
+            let (src1, _) = translate_reg(unwrap_reg(operands[1]));
+
+            match operands[2] {
+                bad64::Operand::Reg { reg: src2, .. } => {
+                    let (src2, _) = translate_reg(src2);
+                    make_rrr(ass, &AND_RR_CODES, dest, src1, src2, reg_class)?;
+                }
+                bad64::Operand::Imm64 { imm, .. } | bad64::Operand::Imm32 { imm, .. } => {
+                    // Full width bit patterns can be encoded in logical immediate instruction
+                    let imm = unwrap_unsigned(imm);
+                    if dest != src1 {
+                        make_mov_rr(ass, reg_class, dest, src1)?;
+                    }
+                    ass.mov(gpr64::rax, imm)?;
+                    let scratch = reg_class.scratch_translation();
+                    make_rr(ass, &AND_RR_CODES, reg_class, dest, scratch)?;
+                }
+                _ => unreachable!(),
             }
         }
         Op::MOVK => {
@@ -446,6 +467,28 @@ pub fn compile_instr(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) ->
         }
         Op::ADD | Op::SUB => return translate_add_sub(arm_instr, ass),
         Op::ASR | Op::LSR | Op::LSL => translate_shift(arm_instr, ass)?,
+        Op::SXTW | Op::SXTH | Op::SXTB | Op::UXTH | Op::UXTB => {
+            let (dest, dest_class) = translate_reg(unwrap_reg(operands[0]));
+            let (src, src_class) = translate_reg(unwrap_reg(operands[1]));
+            let shift = match arm_instr.op() {
+                Op::SXTW => bad64::Shift::SXTW(0),
+                Op::SXTH => bad64::Shift::SXTH(0),
+                Op::SXTB => bad64::Shift::SXTB(0),
+                Op::UXTH => bad64::Shift::UXTH(0),
+                Op::UXTB => bad64::Shift::UXTB(0),
+                _ => unreachable!(),
+            };
+            match dest {
+                RegTranslation::Direct(dest) => {
+                    load_shifted(ass, dest, dest_class, src, src_class, shift)?;
+                }
+                RegTranslation::Indirect(_) => {
+                    load_shifted(ass, dest_class.scratch(), dest_class, src, src_class, shift)?;
+                    make_mov_rr(ass, dest_class, dest, dest_class.scratch_translation())?;
+                }
+                _ => todo!(),
+            }
+        }
         _ => return Ok(false),
     }
 

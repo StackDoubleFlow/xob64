@@ -147,6 +147,10 @@ impl RegClass {
         }
     }
 
+    pub fn scratch_translation(self) -> RegTranslation {
+        RegTranslation::Direct(self.scratch())
+    }
+
     pub fn to_native_class(self) -> NativeRegClass {
         match self {
             RegClass::GPR64 => NativeRegClass::GPR64,
