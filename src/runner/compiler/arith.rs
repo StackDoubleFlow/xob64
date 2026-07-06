@@ -418,6 +418,36 @@ fn translate_div(
     Ok(())
 }
 
+fn translate_madd(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) -> IcedResult<()> {
+    let operands = arm_instr.operands();
+    let (dest, reg_class) = translate_reg(unwrap_reg(operands[0]));
+    let (src1, _) = translate_reg(unwrap_reg(operands[1]));
+    let (src2, _) = translate_reg(unwrap_reg(operands[2]));
+    let (src3, _) = translate_reg(unwrap_reg(operands[2]));
+
+    ass.push(gpr64::rdx)?;
+    make_mov_rr(ass, reg_class, reg_class.scratch_translation(), src1)?;
+
+    let (mul_code, add_code) = match reg_class {
+        RegClass::GPR32 => (Code::Mul_rm32, Code::Add_r32_rm32),
+        RegClass::GPR64 => (Code::Mul_rm64, Code::Add_r64_rm64),
+        _ => unimplemented!(),
+    };
+
+    let mut mul = Instruction::with1(mul_code, Register::None)?;
+    src2.set_operand(&mut mul, 0);
+    ass.add_instruction(mul)?;
+
+    let mut add = Instruction::with2(add_code, reg_class.scratch(), Register::None)?;
+    src3.set_operand(&mut add, 1);
+    ass.add_instruction(add)?;
+
+    make_mov_rr(ass, reg_class, dest, reg_class.scratch_translation())?;
+    ass.pop(gpr64::rdx)?;
+
+    Ok(())
+}
+
 // Returns true if the instruction was successfully translated.
 pub fn compile_instr(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) -> IcedResult<bool> {
     use bad64::Op;
@@ -523,6 +553,7 @@ pub fn compile_instr(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) ->
         }
         Op::UDIV => translate_div(arm_instr, ass, false)?,
         Op::SDIV => translate_div(arm_instr, ass, true)?,
+        Op::MADD => translate_madd(arm_instr, ass)?,
         _ => return Ok(false),
     }
 
