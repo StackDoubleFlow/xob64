@@ -1,6 +1,6 @@
 use iced_x86::{
     Code, Instruction, MemoryOperand, Register,
-    code_asm::{CodeAssembler, gpr64},
+    code_asm::{CodeAssembler, gpr32, gpr64},
 };
 
 use crate::runner::compiler::{
@@ -386,6 +386,38 @@ fn translate_cmp_cmn(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) ->
     Ok(())
 }
 
+fn translate_div(
+    arm_instr: &bad64::Instruction,
+    ass: &mut CodeAssembler,
+    signed: bool,
+) -> IcedResult<()> {
+    let operands = arm_instr.operands();
+    let (dest, reg_class) = translate_reg(unwrap_reg(operands[0]));
+    let (src1, _) = translate_reg(unwrap_reg(operands[1]));
+    let (src2, _) = translate_reg(unwrap_reg(operands[2]));
+    ass.push(gpr64::rdx)?;
+    make_mov_rr(ass, reg_class, reg_class.scratch_translation(), src1)?;
+    if signed {
+        ass.cdq()?;
+    } else {
+        ass.xor(gpr32::edx, gpr32::edx)?;
+    }
+    let (unsigned_code, signed_code) = match reg_class {
+        RegClass::GPR32 => (Code::Div_rm32, Code::Idiv_rm32),
+        RegClass::GPR64 => (Code::Div_rm64, Code::Idiv_rm64),
+        _ => unimplemented!(),
+    };
+    let mut div = Instruction::with1(
+        if signed { signed_code } else { unsigned_code },
+        Register::None,
+    )?;
+    src2.set_operand(&mut div, 0);
+    ass.add_instruction(div)?;
+    make_mov_rr(ass, reg_class, dest, reg_class.scratch_translation())?;
+    ass.pop(gpr64::rdx)?;
+    Ok(())
+}
+
 // Returns true if the instruction was successfully translated.
 pub fn compile_instr(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) -> IcedResult<bool> {
     use bad64::Op;
@@ -489,6 +521,8 @@ pub fn compile_instr(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) ->
                 _ => todo!(),
             }
         }
+        Op::UDIV => translate_div(arm_instr, ass, false)?,
+        Op::SDIV => translate_div(arm_instr, ass, true)?,
         _ => return Ok(false),
     }
 
