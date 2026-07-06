@@ -313,3 +313,18 @@ pub fn unwrap_reg(operand: bad64::Operand) -> bad64::Reg {
         _ => panic!("unwrapped reg on non-reg operand: {:?}", operand),
     }
 }
+
+pub fn unwrap_imm(operand: bad64::Operand) -> (bad64::Imm, Option<bad64::Shift>) {
+    match operand {
+        bad64::Operand::Imm64 { imm, shift } => (imm, shift),
+        bad64::Operand::Imm32 { imm, shift } => (imm, shift),
+        _ => panic!("unwrapped imm on non-imm operand: {:?}", operand),
+    }
+}
+
+pub fn unwrap_unsigned(imm: bad64::Imm) -> u64 {
+    match imm {
+        bad64::Imm::Unsigned(imm) => imm,
+        _ => panic!("unwrapped unsigned on signed operand: {:?}", imm),
+    }
+}

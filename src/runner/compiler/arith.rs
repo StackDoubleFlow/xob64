@@ -1,14 +1,21 @@
-use iced_x86::{Code, Instruction, MemoryOperand, Register, code_asm::CodeAssembler};
+use iced_x86::{
+    Code, Instruction, MemoryOperand, Register,
+    code_asm::{CodeAssembler, gpr64},
+};
 
 use crate::runner::compiler::{
     instr_utils::{
         IcedResult, OpRICodes, OpRRCodes,
-        codes::{ADD_RR_CODES, CMP_RI_CODES, MOV_RI_CODES, SUB_RI_CODES, SUB_RR_CODES},
+        codes::{
+            ADD_RR_CODES, AND_RI_CODES, CMP_RI_CODES, MOV_RI_CODES, OR_RI_CODES, SUB_RI_CODES,
+            SUB_RR_CODES,
+        },
         get_alt_reg, get_shamt_from_shift, label_target, make_cmp_rr, make_mov_ri64, make_mov_rr,
         make_ri, make_rr,
     },
     register::{
-        NativeRegClass, RegClass, RegTranslation, lower_reg_to_class, translate_reg, unwrap_reg,
+        NativeRegClass, RegClass, RegTranslation, lower_reg_to_class, translate_reg, unwrap_imm,
+        unwrap_reg, unwrap_unsigned,
     },
 };
 
@@ -381,14 +388,38 @@ pub fn compile_instr(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) ->
                     make_mov_rr(ass, reg_class, dest_translation, src_translation)?;
                 }
                 bad64::Operand::Imm64 { imm, .. } | bad64::Operand::Imm32 { imm, .. } => {
-                    let bad64::Imm::Unsigned(imm) = imm else {
-                        unreachable!()
-                    };
                     // The immediate is really encoded in 16 bits, so this cast is ok
-                    let imm = imm as i32;
+                    let imm = unwrap_unsigned(imm) as i32;
                     make_ri(ass, &MOV_RI_CODES, reg_class, dest_translation, imm)?;
                 }
                 operand => todo!("operand: {:?}", operand),
+            }
+        }
+        Op::MOVK => {
+            let (dest, reg_class) = translate_reg(unwrap_reg(operands[0]));
+            let (imm, shift) = unwrap_imm(operands[1]);
+            let imm = unwrap_unsigned(imm);
+            let shift = match shift {
+                None => 0,
+                Some(bad64::Shift::LSL(shift)) => shift,
+                _ => unreachable!(),
+            };
+            let imm = imm << shift;
+            let mask = !(0xFFFFu64 << shift);
+
+            if shift > 24 {
+                ass.mov(gpr64::rax, mask)?;
+                let mut and =
+                    Instruction::with2(Code::And_rm64_r64, Register::None, Register::RAX)?;
+                dest.set_operand(&mut and, 0);
+                ass.add_instruction(and)?;
+                ass.mov(gpr64::rax, imm)?;
+                let mut or = Instruction::with2(Code::Or_rm64_r64, Register::None, Register::RAX)?;
+                dest.set_operand(&mut or, 0);
+                ass.add_instruction(or)?;
+            } else {
+                make_ri(ass, &AND_RI_CODES, reg_class, dest, mask as i32)?;
+                make_ri(ass, &OR_RI_CODES, reg_class, dest, imm as i32)?;
             }
         }
         Op::ADRP => {
