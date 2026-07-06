@@ -3,9 +3,9 @@ use iced_x86::{Code, Instruction, MemoryOperand, Register, code_asm::CodeAssembl
 use crate::runner::compiler::{
     instr_utils::{
         IcedResult, OpRICodes, OpRRCodes,
-        codes::{ADD_RR_CODES, MOV_RI_CODES, SUB_RI_CODES, SUB_RR_CODES},
-        get_alt_reg, get_shamt_from_shift, label_target, make_mov_ri64, make_mov_rr, make_ri,
-        make_rr,
+        codes::{ADD_RR_CODES, CMP_RI_CODES, MOV_RI_CODES, SUB_RI_CODES, SUB_RR_CODES},
+        get_alt_reg, get_shamt_from_shift, label_target, make_cmp_rr, make_mov_ri64, make_mov_rr,
+        make_ri, make_rr,
     },
     register::{
         NativeRegClass, RegClass, RegTranslation, lower_reg_to_class, translate_reg, unwrap_reg,
@@ -355,6 +355,22 @@ pub fn compile_instr(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) ->
     let operands = arm_instr.operands();
     match arm_instr.op() {
         Op::NOP => ass.nop()?,
+        Op::CMP => {
+            let (src1, reg_class) = translate_reg(unwrap_reg(operands[0]));
+            match operands[1] {
+                bad64::Operand::Reg { reg: src2, .. } => {
+                    let (src2, _) = translate_reg(src2);
+                    make_cmp_rr(ass, reg_class, src1, src2)?;
+                }
+                bad64::Operand::Imm64 { imm, .. } | bad64::Operand::Imm32 { imm, .. } => {
+                    let bad64::Imm::Unsigned(imm) = imm else {
+                        unreachable!()
+                    };
+                    make_ri(ass, &CMP_RI_CODES, reg_class, src1, imm as i32)?;
+                }
+                operand => todo!("operand: {:?}", operand),
+            }
+        }
         Op::MOV => {
             let dest = unwrap_reg(operands[0]);
             let (dest_translation, reg_class) = translate_reg(dest);

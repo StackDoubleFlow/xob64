@@ -100,7 +100,6 @@ extern "C" fn indirect_jump(ctx: *mut ExecCtx, ret_ptr: *const u8) -> u64 {
     let ctx = unsafe { &*ctx };
 
     let target_addr = get_exec(ctx.param as *const u8);
-    dbg!(ret_ptr, target_addr);
 
     // 12 is the length of the mov + call
     let call_ptr = ret_ptr.wrapping_sub(12);

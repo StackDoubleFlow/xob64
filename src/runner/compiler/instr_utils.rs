@@ -22,6 +22,10 @@ pub mod codes {
     pub const SUB_RR_CODES: OpRRCodes =
         OpRRCodes::new(Sub_r32_rm32, Sub_rm32_r32, Sub_r64_rm64, Sub_rm64_r64);
     pub const SUB_RI_CODES: OpRICodes = OpRICodes::new(Sub_rm32_imm32, Sub_rm64_imm32);
+
+    pub const CMP_RR_CODES: OpRRCodes =
+        OpRRCodes::new(Cmp_r32_rm32, Cmp_rm32_r32, Cmp_r64_rm64, Cmp_rm64_r64);
+    pub const CMP_RI_CODES: OpRICodes = OpRICodes::new(Cmp_rm32_imm32, Cmp_rm64_imm32);
 }
 
 pub struct OpRRCodes {
@@ -96,6 +100,7 @@ fn make_rr_impl(
     dest: RegTranslation,
     src: RegTranslation,
     reads_dest: bool,
+    writes_dest: bool,
 ) -> IcedResult<()> {
     let (r_rm, rm_r) = match reg_class {
         RegClass::GPR32 => (codes.r32_rm32, codes.rm32_r32),
@@ -111,7 +116,9 @@ fn make_rr_impl(
             dest.set_reg_operand(&mut instr, 0, reg_class);
             src.set_operand(&mut instr, 1);
             ass.add_instruction(instr)?;
-            dest.post_write(ass, reg_class)?;
+            if writes_dest {
+                dest.post_write(ass, reg_class)?;
+            }
         }
         _ => {
             let code = if src.is_indirect() { r_rm } else { rm_r };
@@ -133,7 +140,7 @@ pub fn make_rr(
     dest: RegTranslation,
     src: RegTranslation,
 ) -> IcedResult<()> {
-    make_rr_impl(ass, codes, reg_class, dest, src, true)
+    make_rr_impl(ass, codes, reg_class, dest, src, true, true)
 }
 
 pub fn make_mov_rr(
@@ -142,7 +149,24 @@ pub fn make_mov_rr(
     dest: RegTranslation,
     src: RegTranslation,
 ) -> IcedResult<()> {
-    make_rr_impl(ass, &codes::MOV_RR_CODES, reg_class, dest, src, false)
+    make_rr_impl(ass, &codes::MOV_RR_CODES, reg_class, dest, src, false, true)
+}
+
+pub fn make_cmp_rr(
+    ass: &mut CodeAssembler,
+    reg_class: RegClass,
+    src1: RegTranslation,
+    src2: RegTranslation,
+) -> IcedResult<()> {
+    make_rr_impl(
+        ass,
+        &codes::CMP_RR_CODES,
+        reg_class,
+        src1,
+        src2,
+        true,
+        false,
+    )
 }
 
 pub fn make_mov_ri64(ass: &mut CodeAssembler, dest: RegTranslation, imm: i64) -> IcedResult<()> {
