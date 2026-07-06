@@ -82,15 +82,27 @@ fn handle_cbz_cbnz(
     let mut cmp = Instruction::with2(cmp_code, Register::None, 0u32)?;
     reg_translation.set_operand(&mut cmp, 0);
     ass.add_instruction(cmp)?;
-    let label = ass.fwd()?;
-    if arm_instr.op() == bad64::Op::CBZ {
-        ass.jne(label)?;
+
+    let f = if arm_instr.op() == bad64::Op::CBZ {
+        |ass: &mut CodeAssembler, label| ass.jnz(label)
     } else {
-        ass.jz(label)?;
-    }
+        |ass: &mut CodeAssembler, label| ass.jz(label)
+    };
+    reverse_conditional(ass, operands[1], exec_pool, chunk_addr, f)?;
 
-    make_jump(ass, operands[1], chunk_addr, exec_pool)?;
+    Ok(())
+}
 
+fn reverse_conditional(
+    ass: &mut CodeAssembler,
+    label_operand: bad64::Operand,
+    exec_pool: &mut ExecPool,
+    chunk_addr: usize,
+    mut f: impl FnMut(&mut CodeAssembler, CodeLabel) -> IcedResult<()>,
+) -> IcedResult<()> {
+    let label = ass.fwd()?;
+    f(ass, label)?;
+    make_jump(ass, label_operand, chunk_addr, exec_pool)?;
     ass.anonymous_label()?;
     ass.zero_bytes().unwrap();
 
@@ -192,6 +204,43 @@ pub fn compile_instr(
                 callbacks::indirect_jump_landing_pad as *const u8 as u64,
             )?;
         }
+        Op::B_EQ => reverse_conditional(ass, operands[0], exec_pool, chunk_addr, |ass, label| {
+            ass.jne(label)
+        })?,
+        Op::B_NE => reverse_conditional(ass, operands[0], exec_pool, chunk_addr, |ass, label| {
+            ass.je(label)
+        })?,
+        Op::B_LT => reverse_conditional(ass, operands[0], exec_pool, chunk_addr, |ass, label| {
+            ass.jge(label)
+        })?,
+        Op::B_GE => reverse_conditional(ass, operands[0], exec_pool, chunk_addr, |ass, label| {
+            ass.jl(label)
+        })?,
+        Op::B_GT => reverse_conditional(ass, operands[0], exec_pool, chunk_addr, |ass, label| {
+            ass.jle(label)
+        })?,
+        Op::B_LE => reverse_conditional(ass, operands[0], exec_pool, chunk_addr, |ass, label| {
+            ass.jg(label)
+        })?,
+        Op::B_CC => reverse_conditional(ass, operands[0], exec_pool, chunk_addr, |ass, label| {
+            ass.jae(label)
+        })?,
+        Op::B_CS => reverse_conditional(ass, operands[0], exec_pool, chunk_addr, |ass, label| {
+            ass.jb(label)
+        })?,
+        Op::B_HI => reverse_conditional(ass, operands[0], exec_pool, chunk_addr, |ass, label| {
+            ass.jbe(label)
+        })?,
+        Op::B_LS => reverse_conditional(ass, operands[0], exec_pool, chunk_addr, |ass, label| {
+            ass.ja(label)
+        })?,
+        Op::B_VS => reverse_conditional(ass, operands[0], exec_pool, chunk_addr, |ass, label| {
+            ass.jno(label)
+        })?,
+        Op::B_VC => reverse_conditional(ass, operands[0], exec_pool, chunk_addr, |ass, label| {
+            ass.jo(label)
+        })?,
+        Op::B_AL | Op::B_NV => make_jump(ass, operands[0], chunk_addr, exec_pool)?,
         // Branch Target Identification
         Op::BTI => {}
         _ => return Ok(false),

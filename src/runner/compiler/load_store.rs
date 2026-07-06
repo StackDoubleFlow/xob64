@@ -263,8 +263,8 @@ pub fn compile_instr(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) ->
     match arm_instr.op() {
         Op::STP => load_store_pair(ass, arm_instr, make_store)?,
         Op::LDP => load_store_pair(ass, arm_instr, make_load)?,
-        Op::STR => load_store(ass, arm_instr, make_store)?,
-        Op::LDR => load_store(ass, arm_instr, make_load)?,
+        Op::STR | Op::STUR => load_store(ass, arm_instr, make_store)?,
+        Op::LDR | Op::LDUR => load_store(ass, arm_instr, make_load)?,
         _ => return Ok(false),
     }
 
