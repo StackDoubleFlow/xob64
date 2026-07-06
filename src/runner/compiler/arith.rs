@@ -7,7 +7,9 @@ use crate::runner::compiler::{
         get_alt_reg, get_shamt_from_shift, label_target, make_mov_ri64, make_mov_rr, make_ri,
         make_rr,
     },
-    register::{NativeRegClass, RegClass, RegTranslation, translate_reg, unwrap_reg},
+    register::{
+        NativeRegClass, RegClass, RegTranslation, lower_reg_to_class, translate_reg, unwrap_reg,
+    },
 };
 
 // Given `ORR dest, src1, src2`
@@ -62,7 +64,6 @@ fn make_rrr(
     src1: RegTranslation,
     src2: RegTranslation,
     reg_class: RegClass,
-    shift_src2: Option<Register>,
 ) -> IcedResult<()> {
     // TODO: eflags preservation?
     if dest == src1 {
@@ -79,11 +80,7 @@ fn make_rrr(
         ass.add_instruction(mov)?;
         let mut op = Instruction::with2(op_code, Register::None, Register::None)?;
         dest.set_reg_operand(&mut op, 0, reg_class);
-        if let Some(shift_reg) = shift_src2 {
-            op.set_op1_register(shift_reg);
-        } else {
-            src2.set_operand(&mut op, 1);
-        }
+        src2.set_operand(&mut op, 1);
         ass.add_instruction(op)?;
         dest.post_write(ass, reg_class)?;
     }
@@ -233,9 +230,8 @@ fn translate_add_sub(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) ->
                 codes,
                 dest_translation,
                 src1_translation,
-                src2_translation,
+                RegTranslation::Direct(lower_reg_to_class(src2_reg, reg_class)),
                 reg_class,
-                Some(src2_reg),
             )?;
             if using_alt_reg {
                 ass.add_instruction(Instruction::with1(Code::Pop_r64, src2_reg)?)?;
@@ -252,7 +248,6 @@ fn translate_add_sub(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) ->
                     src1_translation,
                     src2_translation,
                     reg_class,
-                    None,
                 )?;
             } else if src1_translation.is_indirect() && src2_translation.is_indirect() {
                 // Since both operands need to be registers
@@ -263,7 +258,6 @@ fn translate_add_sub(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) ->
                     src1_translation,
                     src2_translation,
                     reg_class,
-                    None,
                 )?;
             } else {
                 src2_translation.set_memory_index(&mut lea, reg_class);
