@@ -7,7 +7,7 @@ use crate::runner::{
     CHUNK_SIZE, ExecCtx, ExecPool, callbacks,
     compiler::{
         instr_utils::{IcedResult, label_target, make_call},
-        register::{RegClass, translate_reg, unwrap_reg},
+        register::{RegClass, translate_reg, unwrap_imm, unwrap_reg, unwrap_unsigned},
     },
     get_exec,
 };
@@ -24,7 +24,6 @@ pub fn write_jump(at: *const u8, dest: u64) {
 }
 
 pub fn rewrite_branch(arm_instr: &bad64::Instruction, call_ptr: *const u8) -> *const u8 {
-    assert!(arm_instr.op() == bad64::Op::BL || arm_instr.op() == bad64::Op::B);
     let label_target = label_target(arm_instr.operands()[0]);
     let exec_ptr = get_exec(label_target as *const u8);
 
@@ -89,6 +88,35 @@ fn handle_cbz_cbnz(
         |ass: &mut CodeAssembler, label| ass.jz(label)
     };
     reverse_conditional(ass, operands[1], exec_pool, chunk_addr, f)?;
+
+    Ok(())
+}
+
+fn handle_tbz_tbnz(
+    arm_instr: &bad64::Instruction,
+    ass: &mut CodeAssembler,
+    exec_pool: &mut ExecPool,
+    chunk_addr: usize,
+) -> IcedResult<()> {
+    let operands = arm_instr.operands();
+
+    let (reg_translation, reg_class) = translate_reg(unwrap_reg(operands[0]));
+    let bt_code = match reg_class {
+        RegClass::GPR64 => Code::Bt_rm64_imm8,
+        RegClass::GPR32 => Code::Bt_rm32_imm8,
+        _ => unreachable!(),
+    };
+    let imm = unwrap_unsigned(unwrap_imm(operands[1]).0);
+    let mut bt = Instruction::with2(bt_code, Register::None, imm as u32)?;
+    reg_translation.set_operand(&mut bt, 0);
+    ass.add_instruction(bt)?;
+
+    let f = if arm_instr.op() == bad64::Op::TBZ {
+        |ass: &mut CodeAssembler, label| ass.jc(label)
+    } else {
+        |ass: &mut CodeAssembler, label| ass.jnc(label)
+    };
+    reverse_conditional(ass, operands[2], exec_pool, chunk_addr, f)?;
 
     Ok(())
 }
@@ -178,6 +206,7 @@ pub fn compile_instr(
             ass.zero_bytes()?;
         }
         Op::CBZ | Op::CBNZ => handle_cbz_cbnz(arm_instr, ass, exec_pool, chunk_addr)?,
+        Op::TBZ | Op::TBNZ => handle_tbz_tbnz(arm_instr, ass, exec_pool, chunk_addr)?,
         Op::RET => {
             let shadow_sp = ptr(gpr64::r15 + ExecCtx::SHADOW_SP_OFFSET);
             ass.push(gpr64::r10)?;
