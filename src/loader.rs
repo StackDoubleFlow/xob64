@@ -48,13 +48,6 @@ struct EmuObject {
     entry: Option<*const u8>,
 }
 
-// impl SymbolTable {
-//     pub fn insert_global(&mut self, name: &CStr, addr: *const ()) {
-//         self.global_symbols
-//             .insert(name.to_owned(), addr as *const u8);
-//     }
-// }
-
 static OBJECT_POOL: LazyLock<Arc<Mutex<ObjectPool>>> =
     LazyLock::new(|| Arc::new(Mutex::new(ObjectPool::default())));
 
