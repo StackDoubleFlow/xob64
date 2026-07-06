@@ -448,6 +448,53 @@ fn translate_madd(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) -> Ic
     Ok(())
 }
 
+fn translate_csel(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) -> IcedResult<()> {
+    let operands = arm_instr.operands();
+    let (dest, reg_class) = translate_reg(unwrap_reg(operands[0]));
+    let (src1, _) = translate_reg(unwrap_reg(operands[1]));
+    let (src2, _) = translate_reg(unwrap_reg(operands[2]));
+
+    make_mov_rr(ass, reg_class, reg_class.scratch_translation(), src2)?;
+
+    let cond = match operands[3] {
+        bad64::Operand::Cond(cond) => bad64::Condition::from(cond),
+        _ => unreachable!(),
+    };
+    let (cmov32, cmov64) = match cond {
+        bad64::Condition::EQ => (Code::Cmove_r32_rm32, Code::Cmove_r64_rm64),
+        bad64::Condition::NE => (Code::Cmovne_r32_rm32, Code::Cmovne_r64_rm64),
+        bad64::Condition::CS => (Code::Cmovae_r32_rm32, Code::Cmovae_r64_rm64),
+        bad64::Condition::CC => (Code::Cmovb_r32_rm32, Code::Cmovb_r64_rm64),
+        bad64::Condition::MI => (Code::Cmovs_r32_rm32, Code::Cmovs_r64_rm64),
+        bad64::Condition::PL => (Code::Cmovns_r32_rm32, Code::Cmovns_r64_rm64),
+        bad64::Condition::VS => (Code::Cmovo_r32_rm32, Code::Cmovo_r64_rm64),
+        bad64::Condition::VC => (Code::Cmovno_r32_rm32, Code::Cmovno_r64_rm64),
+        bad64::Condition::HI => (Code::Cmova_r32_rm32, Code::Cmova_r64_rm64),
+        bad64::Condition::LS => (Code::Cmovbe_r32_rm32, Code::Cmovbe_r64_rm64),
+        bad64::Condition::GE => (Code::Cmovge_r32_rm32, Code::Cmovge_r64_rm64),
+        bad64::Condition::LT => (Code::Cmovl_r32_rm32, Code::Cmovl_r64_rm64),
+        bad64::Condition::GT => (Code::Cmovg_r32_rm32, Code::Cmovg_r64_rm64),
+        bad64::Condition::LE => (Code::Cmovle_r32_rm32, Code::Cmovle_r64_rm64),
+        bad64::Condition::AL | bad64::Condition::NV => (Code::Mov_r32_rm32, Code::Mov_r64_rm64),
+    };
+
+    let mut cmov = Instruction::with2(
+        if reg_class == RegClass::GPR64 {
+            cmov64
+        } else {
+            cmov32
+        },
+        Register::RAX,
+        Register::None,
+    )?;
+    src1.set_operand(&mut cmov, 1);
+    ass.add_instruction(cmov)?;
+
+    make_mov_rr(ass, reg_class, dest, reg_class.scratch_translation())?;
+
+    Ok(())
+}
+
 // Returns true if the instruction was successfully translated.
 pub fn compile_instr(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) -> IcedResult<bool> {
     use bad64::Op;
@@ -554,6 +601,7 @@ pub fn compile_instr(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) ->
         Op::UDIV => translate_div(arm_instr, ass, false)?,
         Op::SDIV => translate_div(arm_instr, ass, true)?,
         Op::MADD => translate_madd(arm_instr, ass)?,
+        Op::CSEL => translate_csel(arm_instr, ass)?,
         _ => return Ok(false),
     }
 
