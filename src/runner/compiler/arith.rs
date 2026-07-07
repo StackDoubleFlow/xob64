@@ -193,10 +193,15 @@ fn make_rri(
     Ok(())
 }
 
-fn translate_add_sub(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) -> IcedResult<bool> {
+fn translate_add_sub(
+    arm_instr: &bad64::Instruction,
+    ass: &mut CodeAssembler,
+    set_flags: bool,
+) -> IcedResult<bool> {
     let operands = arm_instr.operands();
     let (dest_translation, reg_class) = translate_reg(unwrap_reg(operands[0]));
     let (src1_translation, _) = translate_reg(unwrap_reg(operands[1]));
+
     let lea_code = match reg_class {
         RegClass::GPR64 => Code::Lea_r64_m,
         RegClass::GPR32 => Code::Lea_r32_m,
@@ -207,8 +212,16 @@ fn translate_add_sub(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) ->
         Register::None,
         MemoryOperand::with_base(Register::None),
     )?;
+    match reg_class {
+        RegClass::GPR64 => lea.set_memory_displ_size(8),
+        RegClass::GPR32 => lea.set_memory_displ_size(4),
+        _ => unreachable!(),
+    }
+
     dest_translation.set_reg_operand(&mut lea, 0, reg_class);
     src1_translation.set_memory_base(&mut lea, reg_class);
+    let is_sub = matches!(arm_instr.op(), bad64::Op::SUB | bad64::Op::SUBS);
+
     match operands[2] {
         bad64::Operand::ShiftReg { reg, shift } => {
             let (src2_translation, src2_class) = translate_reg(reg);
@@ -228,11 +241,7 @@ fn translate_add_sub(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) ->
                 src2_class,
                 shift,
             )?;
-            let codes = if arm_instr.op() == bad64::Op::SUB {
-                &SUB_RR_CODES
-            } else {
-                &ADD_RR_CODES
-            };
+            let codes = if is_sub { &SUB_RR_CODES } else { &ADD_RR_CODES };
             make_rrr(
                 ass,
                 codes,
@@ -247,7 +256,7 @@ fn translate_add_sub(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) ->
         }
         bad64::Operand::Reg { reg, .. } => {
             let (src2_translation, _) = translate_reg(reg);
-            if arm_instr.op() == bad64::Op::SUB {
+            if is_sub {
                 // We can't use lea for sub
                 make_rrr(
                     ass,
@@ -257,7 +266,9 @@ fn translate_add_sub(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) ->
                     src2_translation,
                     reg_class,
                 )?;
-            } else if src1_translation.is_indirect() && src2_translation.is_indirect() {
+            } else if (src1_translation.is_indirect() && src2_translation.is_indirect())
+                || set_flags
+            {
                 // Since both operands need to be registers
                 make_rrr(
                     ass,
@@ -275,26 +286,24 @@ fn translate_add_sub(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) ->
                 dest_translation.post_write(ass, reg_class)?;
             }
         }
-        bad64::Operand::Imm64 {
-            imm: bad64::Imm::Unsigned(imm),
-            shift,
-        } => {
+        bad64::Operand::Imm64 { imm, shift } | bad64::Operand::Imm32 { imm, shift } => {
+            let imm = unwrap_unsigned(imm);
             if shift.is_some() {
                 return Ok(false);
             }
-            if arm_instr.op() == bad64::Op::SUB {
+            let codes = if is_sub { &SUB_RI_CODES } else { &ADD_RI_CODES };
+            if is_sub || set_flags {
                 // We can't use lea for sub
                 make_rri(
                     ass,
-                    &SUB_RI_CODES,
+                    codes,
                     dest_translation,
                     src1_translation,
                     imm as i32,
                     reg_class,
                 )?;
             } else {
-                lea.set_memory_displ_size(8);
-                lea.set_memory_displacement64(imm as u64);
+                lea.set_memory_displacement64(imm);
                 src1_translation.pre_read(ass, reg_class)?;
                 ass.add_instruction(lea)?;
                 dest_translation.post_write(ass, reg_class)?;
@@ -696,7 +705,8 @@ pub fn compile_instr(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) ->
             let addr = label_target(operands[1]);
             make_mov_ri64(ass, dest_translation, addr as i64)?;
         }
-        Op::ADD | Op::SUB => return translate_add_sub(arm_instr, ass),
+        Op::ADD | Op::SUB => return translate_add_sub(arm_instr, ass, false),
+        Op::ADDS | Op::SUBS => return translate_add_sub(arm_instr, ass, true),
         Op::ASR | Op::LSR | Op::LSL => translate_shift(arm_instr, ass)?,
         Op::SXTW | Op::SXTH | Op::SXTB | Op::UXTH | Op::UXTB => {
             let (dest, dest_class) = translate_reg(unwrap_reg(operands[0]));
