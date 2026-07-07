@@ -158,8 +158,8 @@ fn finalize_addr_mode(ass: &mut CodeAssembler, addr_mode_info: AddrModeInfo) -> 
     {
         ass.add_instruction(Instruction::with2(
             Code::Mov_rm64_r64,
-            addr_mode_info.base_reg,
             MemoryOperand::with_base_displ(Register::R15, indirect_offset as i64),
+            addr_mode_info.base_reg,
         )?)?;
     }
 
