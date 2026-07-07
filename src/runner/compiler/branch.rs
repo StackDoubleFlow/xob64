@@ -82,12 +82,12 @@ fn handle_cbz_cbnz(
     reg_translation.set_operand(&mut cmp, 0);
     ass.add_instruction(cmp)?;
 
-    let f = if arm_instr.op() == bad64::Op::CBZ {
-        |ass: &mut CodeAssembler, label| ass.jnz(label)
+    let cond = if arm_instr.op() == bad64::Op::CBZ {
+        bad64::Condition::EQ
     } else {
-        |ass: &mut CodeAssembler, label| ass.jz(label)
+        bad64::Condition::NE
     };
-    reverse_conditional(ass, operands[1], exec_pool, chunk_addr, f)?;
+    make_branch_to_label(ass, operands[1], exec_pool, chunk_addr, cond)?;
 
     Ok(())
 }
@@ -111,29 +111,73 @@ fn handle_tbz_tbnz(
     reg_translation.set_operand(&mut bt, 0);
     ass.add_instruction(bt)?;
 
-    let f = if arm_instr.op() == bad64::Op::TBZ {
-        |ass: &mut CodeAssembler, label| ass.jc(label)
+    // bt will set the carry flag equal to the bit
+    let cond = if arm_instr.op() == bad64::Op::TBZ {
+        bad64::Condition::CC
     } else {
-        |ass: &mut CodeAssembler, label| ass.jnc(label)
+        bad64::Condition::CS
     };
-    reverse_conditional(ass, operands[2], exec_pool, chunk_addr, f)?;
+    make_branch_to_label(ass, operands[2], exec_pool, chunk_addr, cond)?;
 
     Ok(())
 }
 
-fn reverse_conditional(
+fn inverse_condition(cond: bad64::Condition) -> bad64::Condition {
+    use bad64::Condition::*;
+    match cond {
+        MI => PL,
+        PL => MI,
+        EQ => NE,
+        NE => EQ,
+        VS => VC,
+        VC => VS,
+        CS => CC,
+        CC => CS,
+        HI => LS,
+        LS => HI,
+        GE => LT,
+        LT => GE,
+        GT => LE,
+        LE => GT,
+        AL => NV,
+        NV => AL,
+    }
+}
+
+fn make_jcc(ass: &mut CodeAssembler, cond: bad64::Condition, label: CodeLabel) -> IcedResult<()> {
+    use bad64::Condition::*;
+    match cond {
+        EQ => ass.je(label),
+        NE => ass.jne(label),
+        LT => ass.jl(label),
+        GE => ass.jge(label),
+        GT => ass.jg(label),
+        LE => ass.jle(label),
+        CC => ass.jnc(label),
+        CS => ass.jc(label),
+        HI => ass.ja(label),
+        LS => ass.jbe(label),
+        VC => ass.jno(label),
+        VS => ass.jo(label),
+        MI => ass.js(label),
+        PL => ass.jns(label),
+        AL | NV => ass.jmp(label),
+    }
+}
+
+fn make_branch_to_label(
     ass: &mut CodeAssembler,
     label_operand: bad64::Operand,
     exec_pool: &mut ExecPool,
     chunk_addr: usize,
-    mut f: impl FnMut(&mut CodeAssembler, CodeLabel) -> IcedResult<()>,
+    cond: bad64::Condition,
 ) -> IcedResult<()> {
     let label = ass.fwd()?;
-    f(ass, label)?;
+    // Branch over the far jump with the inverse condition
+    make_jcc(ass, inverse_condition(cond), label)?;
     make_jump(ass, label_operand, chunk_addr, exec_pool)?;
     ass.anonymous_label()?;
     ass.zero_bytes().unwrap();
-
     Ok(())
 }
 
@@ -171,6 +215,39 @@ fn make_indirect_jump(ass: &mut CodeAssembler, reg: bad64::Operand) -> IcedResul
     )
 }
 
+pub fn handle_b_cc(
+    arm_instr: &bad64::Instruction,
+    ass: &mut CodeAssembler,
+    exec_pool: &mut ExecPool,
+    chunk_addr: usize,
+) -> IcedResult<bool> {
+    use bad64::Condition::*;
+    use bad64::Op;
+
+    let cond = match arm_instr.op() {
+        Op::B_AL => AL,
+        Op::B_CC => CC,
+        Op::B_CS => CS,
+        Op::B_EQ => EQ,
+        Op::B_GE => GE,
+        Op::B_GT => GT,
+        Op::B_HI => HI,
+        Op::B_LE => LE,
+        Op::B_LS => LS,
+        Op::B_LT => LT,
+        Op::B_MI => MI,
+        Op::B_NE => NE,
+        Op::B_NV => NV,
+        Op::B_PL => PL,
+        Op::B_VC => VC,
+        Op::B_VS => VS,
+        _ => return Ok(false),
+    };
+    make_branch_to_label(ass, arm_instr.operands()[0], exec_pool, chunk_addr, cond)?;
+
+    Ok(true)
+}
+
 // Returns true if the instruction was successfully translated.
 pub fn compile_instr(
     arm_instr: &bad64::Instruction,
@@ -180,6 +257,11 @@ pub fn compile_instr(
 ) -> IcedResult<bool> {
     use bad64::Op;
     let operands = arm_instr.operands();
+
+    if handle_b_cc(arm_instr, ass, exec_pool, chunk_addr)? {
+        return Ok(true);
+    }
+
     match arm_instr.op() {
         Op::B => {
             make_jump(ass, operands[0], chunk_addr, exec_pool)?;
@@ -233,43 +315,6 @@ pub fn compile_instr(
                 callbacks::indirect_jump_landing_pad as *const u8 as u64,
             )?;
         }
-        Op::B_EQ => reverse_conditional(ass, operands[0], exec_pool, chunk_addr, |ass, label| {
-            ass.jne(label)
-        })?,
-        Op::B_NE => reverse_conditional(ass, operands[0], exec_pool, chunk_addr, |ass, label| {
-            ass.je(label)
-        })?,
-        Op::B_LT => reverse_conditional(ass, operands[0], exec_pool, chunk_addr, |ass, label| {
-            ass.jge(label)
-        })?,
-        Op::B_GE => reverse_conditional(ass, operands[0], exec_pool, chunk_addr, |ass, label| {
-            ass.jl(label)
-        })?,
-        Op::B_GT => reverse_conditional(ass, operands[0], exec_pool, chunk_addr, |ass, label| {
-            ass.jle(label)
-        })?,
-        Op::B_LE => reverse_conditional(ass, operands[0], exec_pool, chunk_addr, |ass, label| {
-            ass.jg(label)
-        })?,
-        Op::B_CC => reverse_conditional(ass, operands[0], exec_pool, chunk_addr, |ass, label| {
-            ass.jae(label)
-        })?,
-        Op::B_CS => reverse_conditional(ass, operands[0], exec_pool, chunk_addr, |ass, label| {
-            ass.jb(label)
-        })?,
-        Op::B_HI => reverse_conditional(ass, operands[0], exec_pool, chunk_addr, |ass, label| {
-            ass.jbe(label)
-        })?,
-        Op::B_LS => reverse_conditional(ass, operands[0], exec_pool, chunk_addr, |ass, label| {
-            ass.ja(label)
-        })?,
-        Op::B_VS => reverse_conditional(ass, operands[0], exec_pool, chunk_addr, |ass, label| {
-            ass.jno(label)
-        })?,
-        Op::B_VC => reverse_conditional(ass, operands[0], exec_pool, chunk_addr, |ass, label| {
-            ass.jo(label)
-        })?,
-        Op::B_AL | Op::B_NV => make_jump(ass, operands[0], chunk_addr, exec_pool)?,
         // Branch Target Identification
         Op::BTI => {}
         _ => return Ok(false),
