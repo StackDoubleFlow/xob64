@@ -139,7 +139,14 @@ pub fn load_shifted(
         RegClass::GPR32 => mov_32,
         _ => unreachable!(),
     };
-    let mut mov = Instruction::with2(mov_code, dest, Register::None)?;
+    let mov_dest = if matches!(shift, Shift::UXTW(_)) && dest_class == RegClass::GPR64 {
+        // This is the one case where the mov doesn't match the dest class
+        lower_reg_to_class(dest, RegClass::GPR32)
+    } else {
+        dest
+    };
+    dbg!(mov_code);
+    let mut mov = Instruction::with2(mov_code, mov_dest, Register::None)?;
     src.with_native_class(native_src_class)
         .set_operand(&mut mov, 1);
     ass.add_instruction(mov)?;
