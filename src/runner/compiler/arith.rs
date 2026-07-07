@@ -494,6 +494,13 @@ fn translate_csel(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) -> Ic
 }
 
 fn set_flags(ass: &mut CodeAssembler, nzcv: u64) -> IcedResult<()> {
+    if nzcv == 0 {
+        // This zeros out OF, ZF, CF, and SF
+        ass.mov(gpr32::eax, 0)?;
+        ass.add(gpr32::eax, 1)?;
+        return Ok(());
+    }
+
     ass.pushfq()?;
     ass.pop(gpr64::rax)?;
 
