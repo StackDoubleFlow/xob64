@@ -553,7 +553,7 @@ fn translate_ccmp(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) -> Ic
 
     make_jcc(ass, cond, cond_pass_label)?;
 
-    let nzcv = unwrap_unsigned(unwrap_imm(operands[1]).0);
+    let nzcv = unwrap_unsigned(unwrap_imm(operands[2]).0);
     set_flags(ass, nzcv)?;
 
     ass.jmp(end_label)?;
