@@ -1,7 +1,8 @@
 use iced_x86::{Code, Instruction, MemoryOperand, Register, code_asm::CodeAssembler};
 
 use crate::runner::compiler::{
-    instr_utils::{IcedResult, get_alt_reg, load_indirect},
+    arith::load_shifted,
+    instr_utils::{IcedResult, codes::ADD_RR_CODES, get_alt_reg, make_mov_rr, make_rr},
     register::{NativeRegClass, RegClass, RegTranslation, translate_reg, unwrap_reg},
 };
 
@@ -43,74 +44,81 @@ fn process_addr_mode(
     alternate_indirect: bool,
     alt_blockers: &[RegTranslation],
 ) -> IcedResult<AddrModeInfo> {
+    // When we use an alternate scratch reg, we need to restore it from the stack after we're done
     let mut reg_offset = None;
     let (base_reg, imm) = match mem_operand {
         bad64::Operand::MemOffset { reg, offset, .. } => (reg, offset),
         bad64::Operand::MemPreIdx { reg, imm } => (reg, imm),
         bad64::Operand::MemPostIdxImm { reg, imm } => (reg, imm),
         bad64::Operand::MemExt { regs, shift, .. } => {
-            assert!(shift.is_none());
-            reg_offset = Some(regs[1]);
+            reg_offset = Some((regs[1], shift));
             (regs[0], bad64::Imm::Unsigned(0))
         }
         _ => todo!("memory address operand: {:?}", mem_operand),
     };
     let imm = any_offset_sign(imm);
-    let (reg_translation, _) = translate_reg(base_reg);
+    let (base_reg_translation, _) = translate_reg(base_reg);
 
     let mut pop_base_reg = false;
-    let new_base_reg = match reg_translation {
-        RegTranslation::Direct(reg) => {
-            if reg_offset.is_some() {
-                if alternate_indirect {
-                    let alt_reg = get_alt_reg(alt_blockers);
-                    ass.add_instruction(Instruction::with1(Code::Push_r64, alt_reg)?)?;
-                    pop_base_reg = true;
-                    ass.add_instruction(Instruction::with2(Code::Mov_r64_rm64, alt_reg, reg)?)?;
-                    alt_reg
-                } else {
-                    ass.add_instruction(Instruction::with2(
-                        Code::Mov_r64_rm64,
-                        Register::RAX,
-                        reg,
-                    )?)?;
-                    Register::RAX
-                }
-            } else {
-                reg
-            }
+    let needs_scratch_base_reg = reg_offset.is_some() || base_reg_translation.is_indirect();
+    let new_base_reg = if needs_scratch_base_reg {
+        if alternate_indirect {
+            let alt_reg = get_alt_reg(alt_blockers);
+            ass.add_instruction(Instruction::with1(Code::Push_r64, alt_reg)?)?;
+            pop_base_reg = true;
+            alt_reg
+        } else {
+            Register::RAX
         }
-        RegTranslation::Indirect(indirect_offset) => {
-            if alternate_indirect {
-                // We have a situation where both the offset and store value are indirect.
-                // We need to load the offset into a register that isn't the scratch, and we need to pick a register that isn't going to be the load/store value of either reg1 or reg2.
-                let alt_reg = get_alt_reg(alt_blockers);
-                ass.add_instruction(Instruction::with1(Code::Push_r64, alt_reg)?)?;
-                pop_base_reg = true;
-                ass.add_instruction(Instruction::with2(
-                    Code::Mov_r64_rm64,
-                    alt_reg,
-                    MemoryOperand::with_base_displ(Register::R15, indirect_offset as i64),
-                )?)?;
-                alt_reg
-            } else {
-                load_indirect(ass, RegClass::GPR64, indirect_offset)?;
-                Register::RAX
-            }
+    } else {
+        match base_reg_translation {
+            RegTranslation::Direct(reg) => reg,
+            _ => unreachable!(),
         }
-        RegTranslation::Zero(_) => unreachable!(),
     };
 
-    if let Some(reg_offset) = reg_offset {
+    if let Some((reg_offset, shift)) = reg_offset {
         let (reg_offset, _) = translate_reg(reg_offset);
-        let mut add = Instruction::with2(Code::Add_r64_rm64, new_base_reg, Register::None)?;
-        reg_offset.set_operand(&mut add, 1);
-        ass.add_instruction(add)?;
+
+        // Load the offset to our chosen scratch register
+        if let Some(shift) = shift {
+            load_shifted(
+                ass,
+                new_base_reg,
+                RegClass::GPR64,
+                reg_offset,
+                RegClass::GPR64,
+                shift,
+            )?;
+        } else {
+            make_mov_rr(
+                ass,
+                RegClass::GPR64,
+                RegTranslation::Direct(new_base_reg),
+                reg_offset,
+            )?;
+        }
+
+        // Add the base reg to the offset
+        make_rr(
+            ass,
+            &ADD_RR_CODES,
+            RegClass::GPR64,
+            RegTranslation::Direct(new_base_reg),
+            base_reg_translation,
+        )?;
+    } else if base_reg_translation.is_indirect() {
+        make_mov_rr(
+            ass,
+            RegClass::GPR64,
+            RegTranslation::Direct(new_base_reg),
+            base_reg_translation,
+        )?;
     }
 
     let mut addr_mode_info = AddrModeInfo {
         base_reg: new_base_reg,
-        base_reg_translation: reg_translation,
+        base_reg_translation,
         write_back_base_reg: false,
         offset: 0,
         post_index_offset: None,

@@ -95,7 +95,7 @@ fn make_rrr(
     Ok(())
 }
 
-fn load_shifted(
+pub fn load_shifted(
     ass: &mut CodeAssembler,
     dest: Register,
     dest_class: RegClass,
