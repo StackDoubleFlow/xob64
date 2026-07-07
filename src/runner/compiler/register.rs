@@ -44,12 +44,12 @@ pub enum RegTranslation {
     Direct(Register),
     // The register is stored at `offset` in the exec context
     Indirect(u32),
-    Zero,
+    Zero(NativeRegClass),
 }
 
 impl RegTranslation {
     pub fn is_indirect(&self) -> bool {
-        matches!(self, RegTranslation::Indirect(_) | RegTranslation::Zero)
+        matches!(self, RegTranslation::Indirect(_) | RegTranslation::Zero(_))
     }
 
     pub fn set_operand(self, instr: &mut Instruction, idx: u32) {
@@ -64,7 +64,7 @@ impl RegTranslation {
                 instr.set_memory_displacement32(offset);
                 instr.set_memory_displ_size(1);
             }
-            RegTranslation::Zero => unimplemented!(),
+            RegTranslation::Zero(_) => unimplemented!(),
         }
     }
 
@@ -72,14 +72,17 @@ impl RegTranslation {
         match self {
             RegTranslation::Direct(_) => Ok(()),
             RegTranslation::Indirect(offset) => load_indirect(ass, reg_class, offset),
-            RegTranslation::Zero => ass.xor(gpr32::eax, gpr32::eax),
+            RegTranslation::Zero(_) => ass.xor(gpr32::eax, gpr32::eax),
         }
     }
 
     fn reg_operand(&self, reg_class: RegClass) -> Register {
         match self {
             RegTranslation::Direct(reg) => *reg,
-            RegTranslation::Indirect(_) | RegTranslation::Zero => reg_class.scratch(),
+            RegTranslation::Zero(native_class) => {
+                lower_reg_to_native_class(Register::RAX, *native_class)
+            }
+            RegTranslation::Indirect(_) => reg_class.scratch(),
         }
     }
 
@@ -103,7 +106,7 @@ impl RegTranslation {
 
     pub fn post_write(self, ass: &mut CodeAssembler, reg_class: RegClass) -> IcedResult<()> {
         match self {
-            RegTranslation::Direct(_) | RegTranslation::Zero => Ok(()),
+            RegTranslation::Direct(_) | RegTranslation::Zero(_) => Ok(()),
             RegTranslation::Indirect(offset) => store_indirect(ass, reg_class, offset),
         }
     }
@@ -113,6 +116,7 @@ impl RegTranslation {
             RegTranslation::Direct(reg) => {
                 RegTranslation::Direct(lower_reg_to_native_class(reg.full_register(), native_class))
             }
+            RegTranslation::Zero(_) => RegTranslation::Zero(native_class),
             _ => self,
         }
     }
@@ -129,6 +133,7 @@ pub enum RegClass {
     FP8,
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum NativeRegClass {
     GPR64,
     GPR32,
@@ -247,7 +252,7 @@ pub fn lower_reg_to_class(reg: Register, class: RegClass) -> Register {
     }
 }
 
-fn translate_indirect_reg(reg: bad64::Reg) -> RegTranslation {
+fn translate_indirect_reg(reg: bad64::Reg, reg_class: RegClass) -> RegTranslation {
     use RegTranslation::Indirect;
     use bad64::Reg::*;
     let fp_offset = std::mem::offset_of!(ExecCtx, indirect_fp_regs) as u32;
@@ -261,7 +266,7 @@ fn translate_indirect_reg(reg: bad64::Reg) -> RegTranslation {
     } else if rn >= Q23 as u32 && rn <= Q31 as u32 {
         Indirect(fp_offset + (rn - X8 as u32 + 8) * 16)
     } else if reg == bad64::Reg::XZR {
-        RegTranslation::Zero
+        RegTranslation::Zero(reg_class.to_native_class())
     } else {
         unimplemented!("translating reg: {:?}", reg)
     }
@@ -303,7 +308,7 @@ pub fn translate_reg(reg: bad64::Reg) -> (RegTranslation, RegClass) {
         Q21 => Register::XMM13,
         Q22 => Register::XMM14,
 
-        _ => return (translate_indirect_reg(top_level_reg), reg_class),
+        _ => return (translate_indirect_reg(top_level_reg, reg_class), reg_class),
     };
     (
         RegTranslation::Direct(lower_reg_to_class(direct_translation, reg_class)),

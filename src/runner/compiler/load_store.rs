@@ -2,7 +2,7 @@ use iced_x86::{Code, Instruction, MemoryOperand, Register, code_asm::CodeAssembl
 
 use crate::runner::compiler::{
     instr_utils::{IcedResult, get_alt_reg, load_indirect},
-    register::{RegClass, RegTranslation, translate_reg, unwrap_reg},
+    register::{NativeRegClass, RegClass, RegTranslation, translate_reg, unwrap_reg},
 };
 
 // Used for offset bits, which can only be up to 12 bits, so we don't have to worry about overflow.
@@ -11,6 +11,14 @@ fn any_offset_sign(imm: bad64::Imm) -> i32 {
         bad64::Imm::Signed(imm) => imm as i32,
         bad64::Imm::Unsigned(imm) => imm as i32,
     }
+}
+
+#[derive(Debug)]
+enum LSWidth {
+    RegClass,
+    SignedWord,
+    Half(bool),
+    Byte(bool),
 }
 
 struct AddrModeInfo {
@@ -90,7 +98,7 @@ fn process_addr_mode(
                 Register::RAX
             }
         }
-        RegTranslation::Zero => unreachable!(),
+        RegTranslation::Zero(_) => unreachable!(),
     };
 
     if let Some(reg_offset) = reg_offset {
@@ -159,27 +167,39 @@ type GenFn = fn(
     reg_class: RegClass,
     addr_mode_info: &AddrModeInfo,
     extra_offset: i64,
+    ls_width: LSWidth,
 ) -> IcedResult<()>;
 
 fn make_store(
     ass: &mut CodeAssembler,
-    src_translation: RegTranslation,
+    src: RegTranslation,
     reg_class: RegClass,
     addr_mode_info: &AddrModeInfo,
     extra_offset: i64,
+    ls_width: LSWidth,
 ) -> IcedResult<()> {
-    src_translation.pre_read(ass, reg_class)?;
-    let code = match reg_class {
-        RegClass::GPR64 => Code::Mov_rm64_r64,
-        RegClass::GPR32 => Code::Mov_rm32_r32,
-        RegClass::FP128 => Code::Movaps_xmmm128_xmm,
-        RegClass::FP64 => Code::Movsd_xmmm64_xmm,
-        RegClass::FP32 => Code::Movss_xmmm32_xmm,
-        _ => todo!(),
+    src.pre_read(ass, reg_class)?;
+    let code = match ls_width {
+        LSWidth::RegClass => match reg_class {
+            RegClass::GPR64 => Code::Mov_rm64_r64,
+            RegClass::GPR32 => Code::Mov_rm32_r32,
+            RegClass::FP128 => Code::Movaps_xmmm128_xmm,
+            RegClass::FP64 => Code::Movsd_xmmm64_xmm,
+            RegClass::FP32 => Code::Movss_xmmm32_xmm,
+            _ => todo!(),
+        },
+        LSWidth::SignedWord => unreachable!(),
+        LSWidth::Half(_) => Code::Mov_rm16_r16,
+        LSWidth::Byte(_) => Code::Mov_rm8_r8,
+    };
+    let src = match ls_width {
+        LSWidth::Half(_) => src.with_native_class(NativeRegClass::GPR16),
+        LSWidth::Byte(_) => src.with_native_class(NativeRegClass::GPR8),
+        _ => src,
     };
     let mem = addr_mode_info.memory_operand(extra_offset);
     let mut instr = Instruction::with2(code, mem, Register::None)?;
-    src_translation.set_reg_operand(&mut instr, 1, reg_class);
+    src.set_reg_operand(&mut instr, 1, reg_class);
     ass.add_instruction(instr)?;
     Ok(())
 }
@@ -190,14 +210,22 @@ fn make_load(
     reg_class: RegClass,
     addr_mode_info: &AddrModeInfo,
     extra_offset: i64,
+    ls_width: LSWidth,
 ) -> IcedResult<()> {
-    let code = match reg_class {
-        RegClass::GPR64 => Code::Mov_r64_rm64,
-        RegClass::GPR32 => Code::Mov_r32_rm32,
-        RegClass::FP128 => Code::Movaps_xmm_xmmm128,
-        RegClass::FP64 => Code::Movsd_xmm_xmmm64,
-        RegClass::FP32 => Code::Movss_xmm_xmmm32,
-        _ => todo!(),
+    let code = match ls_width {
+        LSWidth::RegClass => match reg_class {
+            RegClass::GPR64 => Code::Mov_r64_rm64,
+            RegClass::GPR32 => Code::Mov_r32_rm32,
+            RegClass::FP128 => Code::Movaps_xmm_xmmm128,
+            RegClass::FP64 => Code::Movsd_xmm_xmmm64,
+            RegClass::FP32 => Code::Movss_xmm_xmmm32,
+            _ => todo!(),
+        },
+        LSWidth::SignedWord => Code::Movsxd_r64_rm32,
+        LSWidth::Half(false) => Code::Movzx_r32_rm16,
+        LSWidth::Half(true) => Code::Movsx_r32_rm16,
+        LSWidth::Byte(false) => Code::Movzx_r32_rm8,
+        LSWidth::Byte(true) => Code::Movsx_r32_rm8,
     };
     let mem = addr_mode_info.memory_operand(extra_offset);
     let mut instr = Instruction::with2(code, Register::None, mem)?;
@@ -226,9 +254,23 @@ fn load_store_pair(
         &[reg1_translation, reg2_translation],
     )?;
 
-    gen_fn(ass, reg1_translation, reg_class, &addr_mode_info, 0)?;
+    gen_fn(
+        ass,
+        reg1_translation,
+        reg_class,
+        &addr_mode_info,
+        0,
+        LSWidth::RegClass,
+    )?;
     let incr = if reg_class == RegClass::GPR32 { 4 } else { 8 };
-    gen_fn(ass, reg2_translation, reg_class, &addr_mode_info, incr)?;
+    gen_fn(
+        ass,
+        reg2_translation,
+        reg_class,
+        &addr_mode_info,
+        incr,
+        LSWidth::RegClass,
+    )?;
 
     finalize_addr_mode(ass, addr_mode_info)?;
     Ok(())
@@ -238,6 +280,7 @@ fn load_store(
     ass: &mut CodeAssembler,
     arm_instr: &bad64::Instruction,
     gen_fn: GenFn,
+    ls_width: LSWidth,
 ) -> IcedResult<()> {
     let operands = arm_instr.operands();
 
@@ -251,7 +294,14 @@ fn load_store(
         &[reg_translation],
     )?;
 
-    gen_fn(ass, reg_translation, reg_class, &addr_mode_info, 0)?;
+    gen_fn(
+        ass,
+        reg_translation,
+        reg_class,
+        &addr_mode_info,
+        0,
+        ls_width,
+    )?;
 
     finalize_addr_mode(ass, addr_mode_info)?;
     Ok(())
@@ -263,8 +313,15 @@ pub fn compile_instr(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) ->
     match arm_instr.op() {
         Op::STP => load_store_pair(ass, arm_instr, make_store)?,
         Op::LDP => load_store_pair(ass, arm_instr, make_load)?,
-        Op::STR | Op::STUR => load_store(ass, arm_instr, make_store)?,
-        Op::LDR | Op::LDUR => load_store(ass, arm_instr, make_load)?,
+        Op::STR | Op::STUR => load_store(ass, arm_instr, make_store, LSWidth::RegClass)?,
+        Op::LDR | Op::LDUR => load_store(ass, arm_instr, make_load, LSWidth::RegClass)?,
+        Op::LDRB | Op::LDURB => load_store(ass, arm_instr, make_load, LSWidth::Byte(false))?,
+        Op::LDRSB | Op::LDURSB => load_store(ass, arm_instr, make_load, LSWidth::Byte(true))?,
+        Op::LDRH | Op::LDURH => load_store(ass, arm_instr, make_load, LSWidth::Half(false))?,
+        Op::LDRSH | Op::LDURSH => load_store(ass, arm_instr, make_load, LSWidth::Half(true))?,
+        Op::LDRSW | Op::LDURSW => load_store(ass, arm_instr, make_load, LSWidth::SignedWord)?,
+        Op::STRB | Op::STURB => load_store(ass, arm_instr, make_store, LSWidth::Byte(false))?,
+        Op::STRH | Op::STURH => load_store(ass, arm_instr, make_store, LSWidth::Half(false))?,
         _ => return Ok(false),
     }
 
