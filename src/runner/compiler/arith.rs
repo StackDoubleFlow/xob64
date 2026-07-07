@@ -1,9 +1,10 @@
 use iced_x86::{
     Code, Instruction, MemoryOperand, Register,
-    code_asm::{CodeAssembler, gpr32, gpr64},
+    code_asm::{CodeAssembler, gpr8, gpr32, gpr64},
 };
 
 use crate::runner::compiler::{
+    branch::make_jcc,
     instr_utils::{
         IcedResult, OpRICodes, OpRRCodes,
         codes::{
@@ -14,8 +15,8 @@ use crate::runner::compiler::{
         make_ri, make_rr,
     },
     register::{
-        NativeRegClass, RegClass, RegTranslation, lower_reg_to_class, translate_reg, unwrap_imm,
-        unwrap_reg, unwrap_unsigned,
+        NativeRegClass, RegClass, RegTranslation, lower_reg_to_class, translate_reg, unwrap_cond,
+        unwrap_imm, unwrap_reg, unwrap_unsigned,
     },
 };
 
@@ -453,13 +454,10 @@ fn translate_csel(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) -> Ic
     let (dest, reg_class) = translate_reg(unwrap_reg(operands[0]));
     let (src1, _) = translate_reg(unwrap_reg(operands[1]));
     let (src2, _) = translate_reg(unwrap_reg(operands[2]));
+    let cond = unwrap_cond(operands[3]);
 
     make_mov_rr(ass, reg_class, reg_class.scratch_translation(), src2)?;
 
-    let cond = match operands[3] {
-        bad64::Operand::Cond(cond) => bad64::Condition::from(cond),
-        _ => unreachable!(),
-    };
     let (cmov32, cmov64) = match cond {
         bad64::Condition::EQ => (Code::Cmove_r32_rm32, Code::Cmove_r64_rm64),
         bad64::Condition::NE => (Code::Cmovne_r32_rm32, Code::Cmovne_r64_rm64),
@@ -492,6 +490,123 @@ fn translate_csel(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) -> Ic
 
     make_mov_rr(ass, reg_class, dest, reg_class.scratch_translation())?;
 
+    Ok(())
+}
+
+fn set_flags(ass: &mut CodeAssembler, nzcv: u64) -> IcedResult<()> {
+    ass.pushfq()?;
+    ass.pop(gpr64::rax)?;
+
+    // Mask to clear CF, ZF, SF, and OF flags
+    let and_mask = !0x08C1u32;
+    ass.and(gpr64::rax, and_mask as i32)?;
+
+    let mut set_mask = 0;
+    if nzcv & 0b0001 != 0 {
+        // V flag corresponds to OF flag
+        set_mask |= 1 << 11;
+    }
+    if nzcv & 0b0010 != 0 {
+        // C flag corresponds to CF flag
+        set_mask |= 1;
+    }
+    if nzcv & 0b0100 != 0 {
+        // Z flag corresponds to ZF flag
+        set_mask |= 1 << 6;
+    }
+    if nzcv & 0b1000 != 0 {
+        // N flag corresponds to SF flag
+        set_mask |= 1 << 7;
+    }
+    if nzcv != 0 {
+        ass.or(gpr64::rax, set_mask)?;
+    }
+
+    ass.push(gpr64::rax)?;
+    ass.popfq()?;
+    Ok(())
+}
+
+fn translate_ccmp(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) -> IcedResult<()> {
+    let operands = arm_instr.operands();
+    let (src1, reg_class) = translate_reg(unwrap_reg(operands[0]));
+    let cond = unwrap_cond(operands[3]);
+
+    let mut end_label = ass.create_label();
+    let mut cond_pass_label = ass.create_label();
+
+    make_jcc(ass, cond, cond_pass_label)?;
+
+    let nzcv = unwrap_unsigned(unwrap_imm(operands[1]).0);
+    set_flags(ass, nzcv)?;
+
+    ass.jmp(end_label)?;
+    ass.set_label(&mut cond_pass_label)?;
+
+    // `cmp <src1>, <src2|imm>
+    match operands[1] {
+        bad64::Operand::Reg { reg: src2, .. } => {
+            let (src2, _) = translate_reg(src2);
+            make_cmp_rr(ass, reg_class, src1, src2)?;
+        }
+        bad64::Operand::Imm32 { imm, .. } | bad64::Operand::Imm64 { imm, .. } => {
+            let imm = unwrap_unsigned(imm);
+            make_ri(ass, &CMP_RI_CODES, reg_class, src1, imm as i32)?;
+        }
+        _ => unreachable!(),
+    }
+
+    ass.set_label(&mut end_label)?;
+    ass.zero_bytes()?;
+
+    Ok(())
+}
+
+/// Sets AL register to condition
+pub fn make_setcc(
+    ass: &mut CodeAssembler,
+    cond: bad64::Condition,
+    reg: RegTranslation,
+) -> IcedResult<()> {
+    use bad64::Condition::*;
+    match cond {
+        EQ => ass.sete(gpr8::al),
+        NE => ass.setne(gpr8::al),
+        LT => ass.setl(gpr8::al),
+        GE => ass.setge(gpr8::al),
+        GT => ass.setg(gpr8::al),
+        LE => ass.setle(gpr8::al),
+        CC => ass.setnc(gpr8::al),
+        CS => ass.setc(gpr8::al),
+        HI => ass.seta(gpr8::al),
+        LS => ass.setbe(gpr8::al),
+        VC => ass.setno(gpr8::al),
+        VS => ass.seto(gpr8::al),
+        MI => ass.sets(gpr8::al),
+        PL => ass.setns(gpr8::al),
+        AL | NV => ass.mov(gpr8::al, 1),
+    }?;
+    let reg = reg.with_native_class(NativeRegClass::GPR32);
+    match reg {
+        RegTranslation::Direct(reg) => {
+            ass.add_instruction(Instruction::with2(Code::Movzx_r32_rm8, reg, Register::AL)?)?
+        }
+        RegTranslation::Indirect(_) => {
+            ass.movzx(gpr32::eax, gpr8::al)?;
+            let mut mov = Instruction::with2(Code::Mov_rm32_r32, Register::None, Register::RAX)?;
+            reg.set_operand(&mut mov, 0);
+            ass.add_instruction(mov)?;
+        }
+        _ => unreachable!(),
+    }
+    Ok(())
+}
+
+fn translate_cset(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) -> IcedResult<()> {
+    let operands = arm_instr.operands();
+    let (dest, _) = translate_reg(unwrap_reg(operands[0]));
+    let cond = unwrap_cond(operands[1]);
+    make_setcc(ass, cond, dest)?;
     Ok(())
 }
 
@@ -602,6 +717,8 @@ pub fn compile_instr(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) ->
         Op::SDIV => translate_div(arm_instr, ass, true)?,
         Op::MADD => translate_madd(arm_instr, ass)?,
         Op::CSEL => translate_csel(arm_instr, ass)?,
+        Op::CCMP => translate_ccmp(arm_instr, ass)?,
+        Op::CSET => translate_cset(arm_instr, ass)?,
         _ => return Ok(false),
     }
 

@@ -144,7 +144,11 @@ fn inverse_condition(cond: bad64::Condition) -> bad64::Condition {
     }
 }
 
-fn make_jcc(ass: &mut CodeAssembler, cond: bad64::Condition, label: CodeLabel) -> IcedResult<()> {
+pub fn make_jcc(
+    ass: &mut CodeAssembler,
+    cond: bad64::Condition,
+    label: CodeLabel,
+) -> IcedResult<()> {
     use bad64::Condition::*;
     match cond {
         EQ => ass.je(label),

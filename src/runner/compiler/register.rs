@@ -329,6 +329,12 @@ pub fn unwrap_imm(operand: bad64::Operand) -> (bad64::Imm, Option<bad64::Shift>)
 pub fn unwrap_unsigned(imm: bad64::Imm) -> u64 {
     match imm {
         bad64::Imm::Unsigned(imm) => imm,
-        _ => panic!("unwrapped unsigned on signed operand: {:?}", imm),
+        _ => panic!("unwrapped unsigned on operand: {:?}", imm),
+    }
+}
+pub fn unwrap_cond(operand: bad64::Operand) -> bad64::Condition {
+    match operand {
+        bad64::Operand::Cond(cond) => cond,
+        _ => panic!("unwrapped cond on operand: {:?}", operand),
     }
 }
