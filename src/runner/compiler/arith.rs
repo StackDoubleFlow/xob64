@@ -232,34 +232,24 @@ fn translate_add_sub(
     match operands[2] {
         bad64::Operand::ShiftReg { reg, shift } => {
             let (src2_translation, src2_class) = translate_reg(reg);
-            let using_alt_reg = dest_translation.is_indirect() || src1_translation.is_indirect();
-            let src2_reg = if using_alt_reg {
-                let alt_reg = get_alt_reg(&[src1_translation, src1_translation]);
-                ass.add_instruction(Instruction::with1(Code::Push_r64, alt_reg)?)?;
-                alt_reg
-            } else {
-                Register::RAX
-            };
+            let dest_reg = dest_translation.reg_operand(reg_class);
             load_shifted(
                 ass,
-                src2_reg,
+                dest_reg,
                 reg_class,
                 src2_translation,
                 src2_class,
                 shift,
             )?;
             let codes = if is_sub { &SUB_RR_CODES } else { &ADD_RR_CODES };
-            make_rrr(
+            make_rr(
                 ass,
                 codes,
-                dest_translation,
-                src1_translation,
-                RegTranslation::Direct(lower_reg_to_class(src2_reg, reg_class)),
                 reg_class,
+                RegTranslation::Direct(dest_reg),
+                src1_translation,
             )?;
-            if using_alt_reg {
-                ass.add_instruction(Instruction::with1(Code::Pop_r64, src2_reg)?)?;
-            }
+            dest_translation.post_write(ass, reg_class)?;
         }
         bad64::Operand::Reg { reg, .. } => {
             let (src2_translation, _) = translate_reg(reg);

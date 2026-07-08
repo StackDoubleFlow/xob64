@@ -76,7 +76,7 @@ impl RegTranslation {
         }
     }
 
-    fn reg_operand(&self, reg_class: RegClass) -> Register {
+    pub fn reg_operand(&self, reg_class: RegClass) -> Register {
         match self {
             RegTranslation::Direct(reg) => *reg,
             RegTranslation::Zero(native_class) => {
