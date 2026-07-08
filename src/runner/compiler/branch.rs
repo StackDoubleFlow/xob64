@@ -24,7 +24,31 @@ pub fn write_jump(at: *const u8, dest: u64) {
 }
 
 pub fn rewrite_branch(arm_instr: &bad64::Instruction, call_ptr: *const u8) -> *const u8 {
-    let label_target = label_target(arm_instr.operands()[0]);
+    let operands = arm_instr.operands();
+    use bad64::Op;
+    let label_operand = match arm_instr.op() {
+        Op::B_AL
+        | Op::B_CC
+        | Op::B_CS
+        | Op::B_EQ
+        | Op::B_GE
+        | Op::B_GT
+        | Op::B_HI
+        | Op::B_LE
+        | Op::B_LS
+        | Op::B_LT
+        | Op::B_MI
+        | Op::B_NE
+        | Op::B_NV
+        | Op::B_PL
+        | Op::B_VC
+        | Op::B_VS
+        | Op::B
+        | Op::BL => operands[0],
+        Op::CBZ | Op::CBNZ | Op::TBZ | Op::TBNZ => operands[1],
+        _ => unimplemented!("rewrite branch: {}", arm_instr),
+    };
+    let label_target = label_target(label_operand);
     let exec_ptr = get_exec(label_target as *const u8);
 
     write_jump(call_ptr, exec_ptr as u64);
