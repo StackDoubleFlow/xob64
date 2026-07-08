@@ -46,7 +46,8 @@ pub fn rewrite_branch(arm_instr: &bad64::Instruction, call_ptr: *const u8) -> *c
         | Op::B_VS
         | Op::B
         | Op::BL => operands[0],
-        Op::CBZ | Op::CBNZ | Op::TBZ | Op::TBNZ => operands[1],
+        Op::CBZ | Op::CBNZ => operands[1],
+        Op::TBZ | Op::TBNZ => operands[2],
         _ => unimplemented!("rewrite branch: {}", arm_instr),
     };
     let label_target = label_target(label_operand);
