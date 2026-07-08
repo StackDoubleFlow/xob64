@@ -153,7 +153,7 @@ fn finalize_addr_mode(ass: &mut CodeAssembler, addr_mode_info: AddrModeInfo) -> 
         )?)?;
     }
 
-    if let RegTranslation::Indirect(indirect_offset) = addr_mode_info.base_reg_translation
+    if let RegTranslation::Indirect(indirect_offset, _) = addr_mode_info.base_reg_translation
         && addr_mode_info.write_back_base_reg
     {
         ass.add_instruction(Instruction::with2(
@@ -207,7 +207,7 @@ fn make_store(
     };
     let mem = addr_mode_info.memory_operand(extra_offset);
     let mut instr = Instruction::with2(code, mem, Register::None)?;
-    src.set_reg_operand(&mut instr, 1, reg_class);
+    src.set_reg_operand(&mut instr, 1);
     ass.add_instruction(instr)?;
     Ok(())
 }
@@ -237,7 +237,7 @@ fn make_load(
     };
     let mem = addr_mode_info.memory_operand(extra_offset);
     let mut instr = Instruction::with2(code, Register::None, mem)?;
-    dest_translation.set_reg_operand(&mut instr, 0, reg_class);
+    dest_translation.set_reg_operand(&mut instr, 0);
     ass.add_instruction(instr)?;
     dest_translation.post_write(ass, reg_class)?;
     Ok(())

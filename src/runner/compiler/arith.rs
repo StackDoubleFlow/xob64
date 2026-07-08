@@ -11,8 +11,8 @@ use crate::runner::compiler::{
             ADD_RI_CODES, ADD_RR_CODES, AND_RI_CODES, AND_RR_CODES, CMP_RI_CODES, MOV_RI_CODES,
             OR_RI_CODES, OR_RR_CODES, SUB_RI_CODES, SUB_RR_CODES, XOR_RR_CODES,
         },
-        get_alt_reg, get_shamt_from_shift, label_target, make_cmp_rr, make_mov_ri64, make_mov_rr,
-        make_ri, make_rr,
+        get_shamt_from_shift, label_target, make_cmp_rr, make_mov_ri64, make_mov_rr, make_ri,
+        make_rr,
     },
     register::{
         NativeRegClass, RegClass, RegTranslation, lower_reg_to_class, translate_reg, unwrap_cond,
@@ -83,11 +83,11 @@ fn make_rrr(
             _ => unimplemented!(),
         };
         let mut mov = Instruction::with2(mov_code, Register::None, Register::None)?;
-        dest.set_reg_operand(&mut mov, 0, reg_class);
+        dest.set_reg_operand(&mut mov, 0);
         src1.set_operand(&mut mov, 1);
         ass.add_instruction(mov)?;
         let mut op = Instruction::with2(op_code, Register::None, Register::None)?;
-        dest.set_reg_operand(&mut op, 0, reg_class);
+        dest.set_reg_operand(&mut op, 0);
         src2.set_operand(&mut op, 1);
         ass.add_instruction(op)?;
         dest.post_write(ass, reg_class)?;
@@ -190,11 +190,11 @@ fn make_rri(
             _ => unimplemented!(),
         };
         let mut mov = Instruction::with2(mov_code, Register::None, Register::None)?;
-        dest_translation.set_reg_operand(&mut mov, 0, reg_class);
+        dest_translation.set_reg_operand(&mut mov, 0);
         src_translation.set_operand(&mut mov, 1);
         ass.add_instruction(mov)?;
         let mut op = Instruction::with2(op_code, Register::None, imm)?;
-        dest_translation.set_reg_operand(&mut op, 0, reg_class);
+        dest_translation.set_reg_operand(&mut op, 0);
         dest_translation.post_write(ass, reg_class)?;
     }
     Ok(())
@@ -225,14 +225,14 @@ fn translate_add_sub(
         _ => unreachable!(),
     }
 
-    dest_translation.set_reg_operand(&mut lea, 0, reg_class);
-    src1_translation.set_memory_base(&mut lea, reg_class);
+    dest_translation.set_reg_operand(&mut lea, 0);
+    src1_translation.set_memory_base(&mut lea);
     let is_sub = matches!(arm_instr.op(), bad64::Op::SUB | bad64::Op::SUBS);
 
     match operands[2] {
         bad64::Operand::ShiftReg { reg, shift } => {
             let (src2_translation, src2_class) = translate_reg(reg);
-            let dest_reg = dest_translation.reg_operand(reg_class);
+            let dest_reg = dest_translation.reg_operand();
             load_shifted(
                 ass,
                 dest_reg,
@@ -276,7 +276,7 @@ fn translate_add_sub(
                     reg_class,
                 )?;
             } else {
-                src2_translation.set_memory_index(&mut lea, reg_class);
+                src2_translation.set_memory_index(&mut lea);
                 src1_translation.pre_read(ass, reg_class)?;
                 src2_translation.pre_read(ass, reg_class)?;
                 ass.add_instruction(lea)?;
@@ -343,9 +343,9 @@ fn translate_shift(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) -> I
             src2_translation.pre_read(ass, reg_class)?;
             let mut shift_inst =
                 Instruction::with3(r_rm_r, Register::None, Register::None, Register::None)?;
-            dest_translation.set_reg_operand(&mut shift_inst, 0, reg_class);
+            dest_translation.set_reg_operand(&mut shift_inst, 0);
             src1_translation.set_operand(&mut shift_inst, 1);
-            src2_translation.set_reg_operand(&mut shift_inst, 2, reg_class);
+            src2_translation.set_reg_operand(&mut shift_inst, 2);
             ass.add_instruction(shift_inst)?;
             dest_translation.post_write(ass, reg_class)?;
         }
@@ -604,7 +604,7 @@ pub fn make_setcc(
         RegTranslation::Direct(reg) => {
             ass.add_instruction(Instruction::with2(Code::Movzx_r32_rm8, reg, Register::AL)?)?
         }
-        RegTranslation::Indirect(_) => {
+        RegTranslation::Indirect(_, _) => {
             ass.movzx(gpr32::eax, gpr8::al)?;
             let mut mov = Instruction::with2(Code::Mov_rm32_r32, Register::None, Register::RAX)?;
             reg.set_operand(&mut mov, 0);
@@ -730,7 +730,7 @@ pub fn compile_instr(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) ->
                 RegTranslation::Direct(dest) => {
                     load_shifted(ass, dest, dest_class, src, src_class, shift)?;
                 }
-                RegTranslation::Indirect(_) => {
+                RegTranslation::Indirect(_, _) => {
                     load_shifted(ass, dest_class.scratch(), dest_class, src, src_class, shift)?;
                     make_mov_rr(ass, dest_class, dest, dest_class.scratch_translation())?;
                 }

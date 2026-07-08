@@ -43,13 +43,16 @@ use crate::runner::{
 pub enum RegTranslation {
     Direct(Register),
     // The register is stored at `offset` in the exec context
-    Indirect(u32),
+    Indirect(u32, NativeRegClass),
     Zero(NativeRegClass),
 }
 
 impl RegTranslation {
     pub fn is_indirect(&self) -> bool {
-        matches!(self, RegTranslation::Indirect(_) | RegTranslation::Zero(_))
+        matches!(
+            self,
+            RegTranslation::Indirect(_, _) | RegTranslation::Zero(_)
+        )
     }
 
     pub fn set_operand(self, instr: &mut Instruction, idx: u32) {
@@ -58,7 +61,7 @@ impl RegTranslation {
                 instr.set_op_kind(idx, OpKind::Register);
                 instr.set_op_register(idx, reg);
             }
-            RegTranslation::Indirect(offset) => {
+            RegTranslation::Indirect(offset, _) => {
                 instr.set_op_kind(idx, OpKind::Memory);
                 instr.set_memory_base(Register::R15);
                 instr.set_memory_displacement32(offset);
@@ -71,43 +74,42 @@ impl RegTranslation {
     pub fn pre_read(self, ass: &mut CodeAssembler, reg_class: RegClass) -> IcedResult<()> {
         match self {
             RegTranslation::Direct(_) => Ok(()),
-            RegTranslation::Indirect(offset) => load_indirect(ass, reg_class, offset),
+            RegTranslation::Indirect(offset, _) => load_indirect(ass, reg_class, offset),
             RegTranslation::Zero(_) => ass.xor(gpr32::eax, gpr32::eax),
         }
     }
 
-    pub fn reg_operand(&self, reg_class: RegClass) -> Register {
+    pub fn reg_operand(&self) -> Register {
         match self {
             RegTranslation::Direct(reg) => *reg,
-            RegTranslation::Zero(native_class) => {
-                lower_reg_to_native_class(Register::RAX, *native_class)
+            RegTranslation::Zero(native_class) | RegTranslation::Indirect(_, native_class) => {
+                native_class.scratch()
             }
-            RegTranslation::Indirect(_) => reg_class.scratch(),
         }
     }
 
     /// Use this when memory operand is not possible, otherwise use `set_operand`.
     /// If `is_write`, then `post_write` must be called, otherwise `pre_read` must be called.
-    pub fn set_reg_operand(self, instr: &mut Instruction, idx: u32, reg_class: RegClass) {
+    pub fn set_reg_operand(self, instr: &mut Instruction, idx: u32) {
         instr.set_op_kind(idx, OpKind::Register);
-        let reg = self.reg_operand(reg_class);
+        let reg = self.reg_operand();
         instr.set_op_register(idx, reg);
     }
 
     /// Make sure to use `pre_read`
-    pub fn set_memory_base(self, instr: &mut Instruction, reg_class: RegClass) {
-        instr.set_memory_base(self.reg_operand(reg_class));
+    pub fn set_memory_base(self, instr: &mut Instruction) {
+        instr.set_memory_base(self.reg_operand());
     }
 
     /// Make sure to use `pre_read`
-    pub fn set_memory_index(self, instr: &mut Instruction, reg_class: RegClass) {
-        instr.set_memory_index(self.reg_operand(reg_class));
+    pub fn set_memory_index(self, instr: &mut Instruction) {
+        instr.set_memory_index(self.reg_operand());
     }
 
     pub fn post_write(self, ass: &mut CodeAssembler, reg_class: RegClass) -> IcedResult<()> {
         match self {
             RegTranslation::Direct(_) | RegTranslation::Zero(_) => Ok(()),
-            RegTranslation::Indirect(offset) => store_indirect(ass, reg_class, offset),
+            RegTranslation::Indirect(offset, _) => store_indirect(ass, reg_class, offset),
         }
     }
 
@@ -117,7 +119,7 @@ impl RegTranslation {
                 RegTranslation::Direct(lower_reg_to_native_class(reg.full_register(), native_class))
             }
             RegTranslation::Zero(_) => RegTranslation::Zero(native_class),
-            _ => self,
+            RegTranslation::Indirect(idx, _) => RegTranslation::Indirect(idx, native_class),
         }
     }
 }
@@ -139,6 +141,19 @@ pub enum NativeRegClass {
     GPR32,
     GPR16,
     GPR8,
+    XMM,
+}
+
+impl NativeRegClass {
+    pub fn scratch(self) -> Register {
+        match self {
+            NativeRegClass::GPR64 => Register::RAX,
+            NativeRegClass::GPR32 => Register::EAX,
+            NativeRegClass::GPR16 => Register::AX,
+            NativeRegClass::GPR8 => Register::AL,
+            NativeRegClass::XMM => Register::XMM15,
+        }
+    }
 }
 
 impl RegClass {
@@ -160,7 +175,9 @@ impl RegClass {
         match self {
             RegClass::GPR64 => NativeRegClass::GPR64,
             RegClass::GPR32 => NativeRegClass::GPR32,
-            _ => todo!(),
+            RegClass::FP128 | RegClass::FP64 | RegClass::FP32 | RegClass::FP16 | RegClass::FP8 => {
+                NativeRegClass::XMM
+            }
         }
     }
 }
@@ -240,6 +257,13 @@ pub fn lower_reg_to_native_class(reg: Register, class: NativeRegClass) -> Regist
                 panic!("Tried to lower {:?} to GPR8", reg);
             }
         }
+        NativeRegClass::XMM => {
+            if rn >= Register::XMM0 as u32 && rn <= Register::XMM15 as u32 {
+                reg
+            } else {
+                panic!("Tried to lower {:?} to XMM", reg);
+            }
+        }
     }
 }
 
@@ -257,14 +281,15 @@ fn translate_indirect_reg(reg: bad64::Reg, reg_class: RegClass) -> RegTranslatio
     use bad64::Reg::*;
     let fp_offset = std::mem::offset_of!(ExecCtx, indirect_fp_regs) as u32;
     let rn = reg as u32;
+    let native_class = reg_class.to_native_class();
     if rn >= X0 as u32 && rn <= X18 as u32 {
-        Indirect((rn - X0 as u32) * 8)
+        Indirect((rn - X0 as u32) * 8, native_class)
     } else if rn >= X24 as u32 && rn <= X28 as u32 {
-        Indirect((rn - X24 as u32 + 13) * 8)
+        Indirect((rn - X24 as u32 + 13) * 8, native_class)
     } else if rn >= Q8 as u32 && rn <= Q15 as u32 {
-        Indirect(fp_offset + (rn - X8 as u32) * 16)
+        Indirect(fp_offset + (rn - X8 as u32) * 16, native_class)
     } else if rn >= Q23 as u32 && rn <= Q31 as u32 {
-        Indirect(fp_offset + (rn - X8 as u32 + 8) * 16)
+        Indirect(fp_offset + (rn - X8 as u32 + 8) * 16, native_class)
     } else if reg == bad64::Reg::XZR {
         RegTranslation::Zero(reg_class.to_native_class())
     } else {
@@ -339,7 +364,7 @@ pub fn unwrap_unsigned(imm: bad64::Imm) -> u64 {
 }
 pub fn unwrap_cond(operand: bad64::Operand) -> bad64::Condition {
     match operand {
-        bad64::Operand::Cond(cond) => cond,
+        bad64::Operand::Cond(cond) => cond.into(),
         _ => panic!("unwrapped cond on operand: {:?}", operand),
     }
 }

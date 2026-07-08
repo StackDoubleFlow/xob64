@@ -235,7 +235,7 @@ fn make_indirect_jump(ass: &mut CodeAssembler, reg: bad64::Operand) -> IcedResul
         MemoryOperand::with_base_displ(Register::R15, std::mem::offset_of!(ExecCtx, param) as i64),
         Register::None,
     )?;
-    src.set_reg_operand(&mut mov, 1, RegClass::GPR64);
+    src.set_reg_operand(&mut mov, 1);
     ass.add_instruction(mov)?;
     make_call(
         ass,

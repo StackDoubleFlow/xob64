@@ -118,12 +118,12 @@ fn make_rr_impl(
         _ => unimplemented!(),
     };
     match (dest, src) {
-        (RegTranslation::Indirect(_), RegTranslation::Indirect(_)) => {
+        (RegTranslation::Indirect(_, _), RegTranslation::Indirect(_, _)) => {
             if reads_dest {
                 dest.pre_read(ass, reg_class)?;
             }
             let mut instr = Instruction::with2(r_rm, reg_class.scratch(), Register::None)?;
-            dest.set_reg_operand(&mut instr, 0, reg_class);
+            dest.set_reg_operand(&mut instr, 0);
             src.set_operand(&mut instr, 1);
             ass.add_instruction(instr)?;
             if writes_dest {
@@ -181,7 +181,7 @@ pub fn make_cmp_rr(
 
 pub fn make_mov_ri64(ass: &mut CodeAssembler, dest: RegTranslation, imm: i64) -> IcedResult<()> {
     let mut instr = Instruction::with2(Code::Mov_r64_imm64, Register::None, imm)?;
-    dest.set_reg_operand(&mut instr, 0, RegClass::GPR64);
+    dest.set_reg_operand(&mut instr, 0);
     ass.add_instruction(instr)?;
     dest.post_write(ass, RegClass::GPR64)?;
     Ok(())

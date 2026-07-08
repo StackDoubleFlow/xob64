@@ -296,7 +296,9 @@ fn handle_needed(object_pool: &mut ObjectPool, name_bytes: &[u8]) {
         return;
     }
 
-    let wrapped_lib = WrappedLib::try_load(&name).unwrap();
+    let Some(wrapped_lib) = WrappedLib::try_load(&name) else {
+        panic!("failed to load library: {:?}", name);
+    };
     object_pool.wrapped_libs.push(wrapped_lib);
 }
 
