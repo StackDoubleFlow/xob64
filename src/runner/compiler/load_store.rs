@@ -1,8 +1,9 @@
 use iced_x86::{Code, Instruction, MemoryOperand, Register, code_asm::CodeAssembler};
 
 use crate::runner::compiler::{
+    CompileResult,
     arith::load_shifted,
-    instr_utils::{IcedResult, codes::ADD_RR_CODES, get_alt_reg, make_mov_rr, make_rr},
+    instr_utils::{codes::ADD_RR_CODES, get_alt_reg, make_mov_rr, make_rr},
     register::{NativeRegClass, RegClass, RegTranslation, translate_reg, unwrap_reg},
 };
 
@@ -43,7 +44,7 @@ fn process_addr_mode(
     mem_operand: bad64::Operand,
     alternate_indirect: bool,
     alt_blockers: &[RegTranslation],
-) -> IcedResult<AddrModeInfo> {
+) -> CompileResult<AddrModeInfo> {
     // When we use an alternate scratch reg, we need to restore it from the stack after we're done
     let mut reg_offset = None;
     let (base_reg, imm) = match mem_operand {
@@ -57,7 +58,7 @@ fn process_addr_mode(
         _ => todo!("memory address operand: {:?}", mem_operand),
     };
     let imm = any_offset_sign(imm);
-    let (base_reg_translation, _) = translate_reg(base_reg);
+    let (base_reg_translation, _) = translate_reg(base_reg)?;
 
     let mut pop_base_reg = false;
     let needs_scratch_base_reg = reg_offset.is_some() || base_reg_translation.is_indirect();
@@ -78,7 +79,7 @@ fn process_addr_mode(
     };
 
     if let Some((reg_offset, shift)) = reg_offset {
-        let (reg_offset, _) = translate_reg(reg_offset);
+        let (reg_offset, _) = translate_reg(reg_offset)?;
 
         // Load the offset to our chosen scratch register
         if let Some(shift) = shift {
@@ -144,7 +145,7 @@ fn process_addr_mode(
     Ok(addr_mode_info)
 }
 
-fn finalize_addr_mode(ass: &mut CodeAssembler, addr_mode_info: AddrModeInfo) -> IcedResult<()> {
+fn finalize_addr_mode(ass: &mut CodeAssembler, addr_mode_info: AddrModeInfo) -> CompileResult<()> {
     if let Some(offset) = addr_mode_info.post_index_offset {
         ass.add_instruction(Instruction::with2(
             Code::Add_rm64_imm32,
@@ -176,7 +177,7 @@ type GenFn = fn(
     addr_mode_info: &AddrModeInfo,
     extra_offset: i64,
     ls_width: LSWidth,
-) -> IcedResult<()>;
+) -> CompileResult<()>;
 
 fn make_store(
     ass: &mut CodeAssembler,
@@ -185,7 +186,7 @@ fn make_store(
     addr_mode_info: &AddrModeInfo,
     extra_offset: i64,
     ls_width: LSWidth,
-) -> IcedResult<()> {
+) -> CompileResult<()> {
     src.pre_read(ass, reg_class)?;
     let code = match ls_width {
         LSWidth::RegClass => match reg_class {
@@ -219,7 +220,7 @@ fn make_load(
     addr_mode_info: &AddrModeInfo,
     extra_offset: i64,
     ls_width: LSWidth,
-) -> IcedResult<()> {
+) -> CompileResult<()> {
     let code = match ls_width {
         LSWidth::RegClass => match reg_class {
             RegClass::GPR64 => Code::Mov_r64_rm64,
@@ -247,13 +248,13 @@ fn load_store_pair(
     ass: &mut CodeAssembler,
     arm_instr: &bad64::Instruction,
     gen_fn: GenFn,
-) -> IcedResult<()> {
+) -> CompileResult<()> {
     let operands = arm_instr.operands();
 
     let reg1 = unwrap_reg(operands[0]);
-    let (reg1_translation, reg_class) = translate_reg(reg1);
+    let (reg1_translation, reg_class) = translate_reg(reg1)?;
     let reg2 = unwrap_reg(operands[1]);
-    let (reg2_translation, _) = translate_reg(reg2);
+    let (reg2_translation, _) = translate_reg(reg2)?;
 
     let addr_mode_info = process_addr_mode(
         ass,
@@ -289,11 +290,11 @@ fn load_store(
     arm_instr: &bad64::Instruction,
     gen_fn: GenFn,
     ls_width: LSWidth,
-) -> IcedResult<()> {
+) -> CompileResult<()> {
     let operands = arm_instr.operands();
 
     let reg = unwrap_reg(operands[0]);
-    let (reg_translation, reg_class) = translate_reg(reg);
+    let (reg_translation, reg_class) = translate_reg(reg)?;
 
     let addr_mode_info = process_addr_mode(
         ass,
@@ -316,7 +317,10 @@ fn load_store(
 }
 
 // Returns true if the instruction was successfully translated.
-pub fn compile_instr(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) -> IcedResult<bool> {
+pub fn compile_instr(
+    arm_instr: &bad64::Instruction,
+    ass: &mut CodeAssembler,
+) -> CompileResult<bool> {
     use bad64::Op;
     match arm_instr.op() {
         Op::STP => load_store_pair(ass, arm_instr, make_store)?,

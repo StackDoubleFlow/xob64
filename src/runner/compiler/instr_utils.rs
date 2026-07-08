@@ -3,9 +3,10 @@ use iced_x86::{
     code_asm::{CodeAssembler, gpr32, gpr64, xmm},
 };
 
-use crate::runner::compiler::register::{RegClass, RegTranslation};
-
-pub type IcedResult<T> = Result<T, iced_x86::IcedError>;
+use crate::runner::compiler::{
+    CompileResult,
+    register::{RegClass, RegTranslation},
+};
 
 pub mod codes {
     use super::{OpRICodes, OpRRCodes};
@@ -75,32 +76,34 @@ pub fn load_indirect(
     ass: &mut CodeAssembler,
     reg_class: RegClass,
     indirect_offset: u32,
-) -> IcedResult<()> {
+) -> CompileResult<()> {
     let mem = gpr64::r15 + indirect_offset;
     match reg_class {
-        RegClass::GPR32 => ass.mov(gpr32::eax, mem),
-        RegClass::GPR64 => ass.mov(gpr64::rax, mem),
-        RegClass::FP128 => ass.movaps(xmm::xmm15, mem),
-        RegClass::FP64 => ass.movsd_2(xmm::xmm15, mem),
-        RegClass::FP32 => ass.movss(xmm::xmm15, mem),
+        RegClass::GPR32 => ass.mov(gpr32::eax, mem)?,
+        RegClass::GPR64 => ass.mov(gpr64::rax, mem)?,
+        RegClass::FP128 => ass.movaps(xmm::xmm15, mem)?,
+        RegClass::FP64 => ass.movsd_2(xmm::xmm15, mem)?,
+        RegClass::FP32 => ass.movss(xmm::xmm15, mem)?,
         _ => todo!(),
     }
+    Ok(())
 }
 
 pub fn store_indirect(
     ass: &mut CodeAssembler,
     reg_class: RegClass,
     indirect_offset: u32,
-) -> IcedResult<()> {
+) -> CompileResult<()> {
     let mem = gpr64::r15 + indirect_offset;
     match reg_class {
-        RegClass::GPR32 => ass.mov(mem, gpr32::eax),
-        RegClass::GPR64 => ass.mov(mem, gpr64::rax),
-        RegClass::FP128 => ass.movaps(mem, xmm::xmm15),
-        RegClass::FP64 => ass.movsd_2(mem, xmm::xmm15),
-        RegClass::FP32 => ass.movss(mem, xmm::xmm15),
+        RegClass::GPR32 => ass.mov(mem, gpr32::eax)?,
+        RegClass::GPR64 => ass.mov(mem, gpr64::rax)?,
+        RegClass::FP128 => ass.movaps(mem, xmm::xmm15)?,
+        RegClass::FP64 => ass.movsd_2(mem, xmm::xmm15)?,
+        RegClass::FP32 => ass.movss(mem, xmm::xmm15)?,
         _ => todo!(),
     }
+    Ok(())
 }
 
 fn make_rr_impl(
@@ -111,7 +114,7 @@ fn make_rr_impl(
     src: RegTranslation,
     reads_dest: bool,
     writes_dest: bool,
-) -> IcedResult<()> {
+) -> CompileResult<()> {
     let (r_rm, rm_r) = match reg_class {
         RegClass::GPR32 => (codes.r32_rm32, codes.rm32_r32),
         RegClass::GPR64 => (codes.r64_rm64, codes.rm64_r64),
@@ -149,7 +152,7 @@ pub fn make_rr(
     reg_class: RegClass,
     dest: RegTranslation,
     src: RegTranslation,
-) -> IcedResult<()> {
+) -> CompileResult<()> {
     make_rr_impl(ass, codes, reg_class, dest, src, true, true)
 }
 
@@ -158,7 +161,7 @@ pub fn make_mov_rr(
     reg_class: RegClass,
     dest: RegTranslation,
     src: RegTranslation,
-) -> IcedResult<()> {
+) -> CompileResult<()> {
     make_rr_impl(ass, &codes::MOV_RR_CODES, reg_class, dest, src, false, true)
 }
 
@@ -167,7 +170,7 @@ pub fn make_cmp_rr(
     reg_class: RegClass,
     src1: RegTranslation,
     src2: RegTranslation,
-) -> IcedResult<()> {
+) -> CompileResult<()> {
     make_rr_impl(
         ass,
         &codes::CMP_RR_CODES,
@@ -179,7 +182,7 @@ pub fn make_cmp_rr(
     )
 }
 
-pub fn make_mov_ri64(ass: &mut CodeAssembler, dest: RegTranslation, imm: i64) -> IcedResult<()> {
+pub fn make_mov_ri64(ass: &mut CodeAssembler, dest: RegTranslation, imm: i64) -> CompileResult<()> {
     let mut instr = Instruction::with2(Code::Mov_r64_imm64, Register::None, imm)?;
     dest.set_reg_operand(&mut instr, 0);
     ass.add_instruction(instr)?;
@@ -193,7 +196,7 @@ pub fn make_ri(
     reg_class: RegClass,
     reg: RegTranslation,
     imm: i32,
-) -> IcedResult<()> {
+) -> CompileResult<()> {
     let code = match reg_class {
         RegClass::GPR32 => codes.rm32_imm32,
         RegClass::GPR64 => codes.rm64_imm32,
@@ -205,7 +208,7 @@ pub fn make_ri(
     Ok(())
 }
 
-pub fn make_call(ass: &mut CodeAssembler, target: u64) -> IcedResult<()> {
+pub fn make_call(ass: &mut CodeAssembler, target: u64) -> CompileResult<()> {
     ass.mov(gpr64::rax, target)?;
     ass.call(gpr64::rax)?;
     Ok(())

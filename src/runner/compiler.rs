@@ -13,7 +13,7 @@ use iced_x86::{
 
 use crate::runner::{
     CHUNK_SIZE, CompiledChunk, EXECUTABLE_ALLOC_SIZE, ExecPool, callbacks,
-    compiler::instr_utils::{IcedResult, make_call},
+    compiler::instr_utils::make_call,
 };
 
 fn alloc_new_region(exec_pool: &mut ExecPool) {
@@ -111,15 +111,30 @@ fn finalize_chunk(
     }
 }
 
+#[derive(Debug)]
+pub enum CompileError {
+    #[allow(dead_code)]
+    IcedError(iced_x86::IcedError),
+    UnsupportedInstruction,
+    InvalidInstruction,
+}
+
+impl From<iced_x86::IcedError> for CompileError {
+    fn from(value: iced_x86::IcedError) -> Self {
+        Self::IcedError(value)
+    }
+}
+
+pub type CompileResult<T> = Result<T, CompileError>;
+
 pub fn compile_instr(
     exec_pool: &mut ExecPool,
     arm_instr: &Result<bad64::Instruction, bad64::DecodeError>,
     ass: &mut CodeAssembler,
     chunk_addr: usize,
-) -> IcedResult<()> {
+) -> CompileResult<()> {
     let Ok(arm_instr) = arm_instr else {
-        make_call(ass, callbacks::invalid_arm_instr as *const () as u64)?;
-        return Ok(());
+        return Err(CompileError::InvalidInstruction);
     };
     // println!("{}", arm_instr);
 
@@ -143,12 +158,7 @@ pub fn compile_instr(
         return Ok(());
     }
 
-    make_call(
-        ass,
-        callbacks::unimplemented_arm_instr_landing_pad as *const () as u64,
-    )?;
-
-    Ok(())
+    Err(CompileError::UnsupportedInstruction)
 }
 
 fn get_arm_chunk(
@@ -174,7 +184,19 @@ pub fn compile_chunk(exec_pool: &mut ExecPool, chunk_addr: usize) -> CompiledChu
         // TODO: what's the performance penalty of this?
         ass.zero_bytes().unwrap();
 
-        compile_instr(exec_pool, &arm_instr, &mut ass, chunk_addr).unwrap();
+        match compile_instr(exec_pool, &arm_instr, &mut ass, chunk_addr) {
+            Err(CompileError::InvalidInstruction) => {
+                make_call(&mut ass, callbacks::invalid_arm_instr as *const () as u64).unwrap()
+            }
+            Err(CompileError::UnsupportedInstruction) => {
+                make_call(
+                    &mut ass,
+                    callbacks::unimplemented_arm_instr_landing_pad as *const () as u64,
+                )
+                .unwrap();
+            }
+            result => result.unwrap(),
+        }
         // for instr in ass.instructions() {
         //     if instr.code() == iced_x86::Code::Mov_rm32_r32
         //         && instr.op1_register() == iced_x86::Register::RAX

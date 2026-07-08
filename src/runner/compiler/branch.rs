@@ -6,7 +6,8 @@ use iced_x86::{
 use crate::runner::{
     CHUNK_SIZE, ExecCtx, ExecPool, callbacks,
     compiler::{
-        instr_utils::{IcedResult, label_target, make_call},
+        CompileResult,
+        instr_utils::{label_target, make_call},
         register::{RegClass, translate_reg, unwrap_imm, unwrap_reg, unwrap_unsigned},
     },
     get_exec,
@@ -61,7 +62,7 @@ fn make_jump(
     label_operand: bad64::Operand,
     chunk_addr: usize,
     exec_pool: &mut ExecPool,
-) -> IcedResult<()> {
+) -> CompileResult<()> {
     let target = label_target(label_operand);
     if target >= chunk_addr && target < chunk_addr + CHUNK_SIZE {
         let arm_instr_idx = (target - chunk_addr) / 4;
@@ -93,10 +94,10 @@ fn handle_cbz_cbnz(
     ass: &mut CodeAssembler,
     exec_pool: &mut ExecPool,
     chunk_addr: usize,
-) -> IcedResult<()> {
+) -> CompileResult<()> {
     let operands = arm_instr.operands();
 
-    let (reg_translation, reg_class) = translate_reg(unwrap_reg(operands[0]));
+    let (reg_translation, reg_class) = translate_reg(unwrap_reg(operands[0]))?;
     let cmp_code = match reg_class {
         RegClass::GPR64 => Code::Cmp_rm64_imm8,
         RegClass::GPR32 => Code::Cmp_rm32_imm8,
@@ -121,10 +122,10 @@ fn handle_tbz_tbnz(
     ass: &mut CodeAssembler,
     exec_pool: &mut ExecPool,
     chunk_addr: usize,
-) -> IcedResult<()> {
+) -> CompileResult<()> {
     let operands = arm_instr.operands();
 
-    let (reg_translation, reg_class) = translate_reg(unwrap_reg(operands[0]));
+    let (reg_translation, reg_class) = translate_reg(unwrap_reg(operands[0]))?;
     let bt_code = match reg_class {
         RegClass::GPR64 => Code::Bt_rm64_imm8,
         RegClass::GPR32 => Code::Bt_rm32_imm8,
@@ -172,25 +173,26 @@ pub fn make_jcc(
     ass: &mut CodeAssembler,
     cond: bad64::Condition,
     label: CodeLabel,
-) -> IcedResult<()> {
+) -> CompileResult<()> {
     use bad64::Condition::*;
     match cond {
-        EQ => ass.je(label),
-        NE => ass.jne(label),
-        LT => ass.jl(label),
-        GE => ass.jge(label),
-        GT => ass.jg(label),
-        LE => ass.jle(label),
-        CC => ass.jnc(label),
-        CS => ass.jc(label),
-        HI => ass.ja(label),
-        LS => ass.jbe(label),
-        VC => ass.jno(label),
-        VS => ass.jo(label),
-        MI => ass.js(label),
-        PL => ass.jns(label),
-        AL | NV => ass.jmp(label),
+        EQ => ass.je(label)?,
+        NE => ass.jne(label)?,
+        LT => ass.jl(label)?,
+        GE => ass.jge(label)?,
+        GT => ass.jg(label)?,
+        LE => ass.jle(label)?,
+        CC => ass.jnc(label)?,
+        CS => ass.jc(label)?,
+        HI => ass.ja(label)?,
+        LS => ass.jbe(label)?,
+        VC => ass.jno(label)?,
+        VS => ass.jo(label)?,
+        MI => ass.js(label)?,
+        PL => ass.jns(label)?,
+        AL | NV => ass.jmp(label)?,
     }
+    Ok(())
 }
 
 fn make_branch_to_label(
@@ -199,7 +201,7 @@ fn make_branch_to_label(
     exec_pool: &mut ExecPool,
     chunk_addr: usize,
     cond: bad64::Condition,
-) -> IcedResult<()> {
+) -> CompileResult<()> {
     let label = ass.fwd()?;
     // Branch over the far jump with the inverse condition
     make_jcc(ass, inverse_condition(cond), label)?;
@@ -209,7 +211,11 @@ fn make_branch_to_label(
     Ok(())
 }
 
-fn push_shadow_stack(ass: &mut CodeAssembler, label: CodeLabel, reg: Register) -> IcedResult<()> {
+fn push_shadow_stack(
+    ass: &mut CodeAssembler,
+    label: CodeLabel,
+    reg: Register,
+) -> CompileResult<()> {
     // TODO: avoid spilling register
     ass.push(gpr64::r10)?;
     let shadow_sp = ptr(gpr64::r15 + ExecCtx::SHADOW_SP_OFFSET);
@@ -227,8 +233,8 @@ fn push_shadow_stack(ass: &mut CodeAssembler, label: CodeLabel, reg: Register) -
     Ok(())
 }
 
-fn make_indirect_jump(ass: &mut CodeAssembler, reg: bad64::Operand) -> IcedResult<()> {
-    let (src, _) = translate_reg(unwrap_reg(reg));
+fn make_indirect_jump(ass: &mut CodeAssembler, reg: bad64::Operand) -> CompileResult<()> {
+    let (src, _) = translate_reg(unwrap_reg(reg))?;
     src.pre_read(ass, RegClass::GPR64)?;
     let mut mov = Instruction::with2(
         Code::Mov_rm64_r64,
@@ -248,7 +254,7 @@ pub fn handle_b_cc(
     ass: &mut CodeAssembler,
     exec_pool: &mut ExecPool,
     chunk_addr: usize,
-) -> IcedResult<bool> {
+) -> CompileResult<bool> {
     use bad64::Condition::*;
     use bad64::Op;
 
@@ -282,7 +288,7 @@ pub fn compile_instr(
     ass: &mut CodeAssembler,
     exec_pool: &mut ExecPool,
     chunk_addr: usize,
-) -> IcedResult<bool> {
+) -> CompileResult<bool> {
     use bad64::Op;
     let operands = arm_instr.operands();
 

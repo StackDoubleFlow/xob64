@@ -6,7 +6,10 @@ use num_traits::FromPrimitive;
 
 use crate::runner::{
     ExecCtx,
-    compiler::instr_utils::{IcedResult, load_indirect, store_indirect},
+    compiler::{
+        CompileError, CompileResult,
+        instr_utils::{load_indirect, store_indirect},
+    },
 };
 
 // Allocation for all 16 integer x86_64 registers:
@@ -71,12 +74,13 @@ impl RegTranslation {
         }
     }
 
-    pub fn pre_read(self, ass: &mut CodeAssembler, reg_class: RegClass) -> IcedResult<()> {
+    pub fn pre_read(self, ass: &mut CodeAssembler, reg_class: RegClass) -> CompileResult<()> {
         match self {
-            RegTranslation::Direct(_) => Ok(()),
-            RegTranslation::Indirect(offset, _) => load_indirect(ass, reg_class, offset),
-            RegTranslation::Zero(_) => ass.xor(gpr32::eax, gpr32::eax),
+            RegTranslation::Direct(_) => {}
+            RegTranslation::Indirect(offset, _) => load_indirect(ass, reg_class, offset)?,
+            RegTranslation::Zero(_) => ass.xor(gpr32::eax, gpr32::eax)?,
         }
+        Ok(())
     }
 
     pub fn reg_operand(&self) -> Register {
@@ -106,7 +110,7 @@ impl RegTranslation {
         instr.set_memory_index(self.reg_operand());
     }
 
-    pub fn post_write(self, ass: &mut CodeAssembler, reg_class: RegClass) -> IcedResult<()> {
+    pub fn post_write(self, ass: &mut CodeAssembler, reg_class: RegClass) -> CompileResult<()> {
         match self {
             RegTranslation::Direct(_) | RegTranslation::Zero(_) => Ok(()),
             RegTranslation::Indirect(offset, _) => store_indirect(ass, reg_class, offset),
@@ -183,10 +187,10 @@ impl RegClass {
 }
 
 // Returns the RegClass and the top-level Reg
-pub fn get_reg_class(reg: bad64::Reg) -> (RegClass, bad64::Reg) {
+pub fn get_reg_class(reg: bad64::Reg) -> CompileResult<(RegClass, bad64::Reg)> {
     use bad64::Reg;
     let rn = reg as u32;
-    if reg == Reg::SP || rn >= Reg::X0 as u32 && rn <= Reg::XZR as u32 {
+    let result = if reg == Reg::SP || rn >= Reg::X0 as u32 && rn <= Reg::XZR as u32 {
         (RegClass::GPR64, reg)
     } else if reg == Reg::WSP {
         (RegClass::GPR32, Reg::SP)
@@ -218,8 +222,9 @@ pub fn get_reg_class(reg: bad64::Reg) -> (RegClass, bad64::Reg) {
             Reg::from_u32(rn - Reg::B0 as u32 + Reg::Q0 as u32).unwrap(),
         )
     } else {
-        todo!("get_reg_class: {:?}", reg)
-    }
+        return Err(CompileError::UnsupportedInstruction);
+    };
+    Ok(result)
 }
 
 pub fn lower_reg_to_native_class(reg: Register, class: NativeRegClass) -> Register {
@@ -276,13 +281,13 @@ pub fn lower_reg_to_class(reg: Register, class: RegClass) -> Register {
     }
 }
 
-fn translate_indirect_reg(reg: bad64::Reg, reg_class: RegClass) -> RegTranslation {
+fn translate_indirect_reg(reg: bad64::Reg, reg_class: RegClass) -> CompileResult<RegTranslation> {
     use RegTranslation::Indirect;
     use bad64::Reg::*;
     let fp_offset = std::mem::offset_of!(ExecCtx, indirect_fp_regs) as u32;
     let rn = reg as u32;
     let native_class = reg_class.to_native_class();
-    if rn >= X0 as u32 && rn <= X18 as u32 {
+    Ok(if rn >= X0 as u32 && rn <= X18 as u32 {
         Indirect((rn - X0 as u32) * 8, native_class)
     } else if rn >= X24 as u32 && rn <= X28 as u32 {
         Indirect((rn - X24 as u32 + 13) * 8, native_class)
@@ -293,13 +298,13 @@ fn translate_indirect_reg(reg: bad64::Reg, reg_class: RegClass) -> RegTranslatio
     } else if reg == bad64::Reg::XZR {
         RegTranslation::Zero(reg_class.to_native_class())
     } else {
-        unimplemented!("translating reg: {:?}", reg)
-    }
+        return Err(CompileError::UnsupportedInstruction);
+    })
 }
 
-pub fn translate_reg(reg: bad64::Reg) -> (RegTranslation, RegClass) {
+pub fn translate_reg(reg: bad64::Reg) -> CompileResult<(RegTranslation, RegClass)> {
     use bad64::Reg::*;
-    let (reg_class, top_level_reg) = get_reg_class(reg);
+    let (reg_class, top_level_reg) = get_reg_class(reg)?;
     let direct_translation = match top_level_reg {
         // These are sorted by frequency. See the comment at the top of the file.
         X0 => Register::RDI,
@@ -333,12 +338,12 @@ pub fn translate_reg(reg: bad64::Reg) -> (RegTranslation, RegClass) {
         Q21 => Register::XMM13,
         Q22 => Register::XMM14,
 
-        _ => return (translate_indirect_reg(top_level_reg, reg_class), reg_class),
+        _ => return Ok((translate_indirect_reg(top_level_reg, reg_class)?, reg_class)),
     };
-    (
+    Ok((
         RegTranslation::Direct(lower_reg_to_class(direct_translation, reg_class)),
         reg_class,
-    )
+    ))
 }
 
 pub fn unwrap_reg(operand: bad64::Operand) -> bad64::Reg {
