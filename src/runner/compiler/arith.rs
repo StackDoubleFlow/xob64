@@ -145,7 +145,6 @@ pub fn load_shifted(
     } else {
         dest
     };
-    dbg!(mov_code);
     let mut mov = Instruction::with2(mov_code, mov_dest, Register::None)?;
     src.with_native_class(native_src_class)
         .set_operand(&mut mov, 1);
@@ -606,7 +605,7 @@ pub fn make_setcc(
         }
         RegTranslation::Indirect(_, _) => {
             ass.movzx(gpr32::eax, gpr8::al)?;
-            let mut mov = Instruction::with2(Code::Mov_rm32_r32, Register::None, Register::RAX)?;
+            let mut mov = Instruction::with2(Code::Mov_rm32_r32, Register::None, Register::EAX)?;
             reg.set_operand(&mut mov, 0);
             ass.add_instruction(mov)?;
         }

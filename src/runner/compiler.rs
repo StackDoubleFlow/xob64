@@ -121,6 +121,7 @@ pub fn compile_instr(
         make_call(ass, callbacks::invalid_arm_instr as *const () as u64)?;
         return Ok(());
     };
+    // println!("{}", arm_instr);
 
     // Load and store instructions
     if load_store::compile_instr(arm_instr, ass)? {
@@ -174,6 +175,13 @@ pub fn compile_chunk(exec_pool: &mut ExecPool, chunk_addr: usize) -> CompiledChu
         ass.zero_bytes().unwrap();
 
         compile_instr(exec_pool, &arm_instr, &mut ass, chunk_addr).unwrap();
+        // for instr in ass.instructions() {
+        //     if instr.code() == iced_x86::Code::Mov_rm32_r32
+        //         && instr.op1_register() == iced_x86::Register::RAX
+        //     {
+        //         panic!();
+        //     }
+        // }
     }
     make_call(
         &mut ass,
