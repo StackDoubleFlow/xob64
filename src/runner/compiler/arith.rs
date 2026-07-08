@@ -4,7 +4,7 @@ use iced_x86::{
 };
 
 use crate::runner::compiler::{
-    CompileResult,
+    CompileError, CompileResult,
     branch::make_jcc,
     instr_utils::{
         OpRICodes, OpRRCodes,
@@ -103,10 +103,10 @@ pub fn load_shifted(
     src: RegTranslation,
     src_class: RegClass,
     shift: bad64::Shift,
-) -> CompileResult<bool> {
+) -> CompileResult<()> {
     use bad64::Shift;
     let (mov_64, mov_32) = match shift {
-        Shift::MSL(_) | Shift::ROR(_) => return Ok(false),
+        Shift::MSL(_) | Shift::ROR(_) => return Err(CompileError::UnsupportedInstruction),
         // Moving to a 32-bit register zero-extends it, so most of these are the same between GPR64 and GPR32
         Shift::UXTB(_) => (Code::Movzx_r64_rm8, Code::Movzx_r32_rm8),
         Shift::UXTH(_) => (Code::Movzx_r64_rm16, Code::Movzx_r32_rm16),
@@ -153,7 +153,7 @@ pub fn load_shifted(
 
     let shamt = get_shamt_from_shift(shift);
     if shamt == 0 {
-        return Ok(true);
+        return Ok(());
     }
 
     let (shift_64, shift_32) = match shift {
@@ -169,7 +169,7 @@ pub fn load_shifted(
     let shift = Instruction::with2(shift_code, dest, shamt)?;
     ass.add_instruction(shift)?;
 
-    Ok(true)
+    Ok(())
 }
 
 fn make_rri(
@@ -204,7 +204,7 @@ fn translate_add_sub(
     arm_instr: &bad64::Instruction,
     ass: &mut CodeAssembler,
     set_flags: bool,
-) -> CompileResult<bool> {
+) -> CompileResult<()> {
     let operands = arm_instr.operands();
     let (dest_translation, reg_class) = translate_reg(unwrap_reg(operands[0]))?;
     let (src1_translation, _) = translate_reg(unwrap_reg(operands[1]))?;
@@ -286,7 +286,7 @@ fn translate_add_sub(
         bad64::Operand::Imm64 { imm, shift } | bad64::Operand::Imm32 { imm, shift } => {
             let imm = unwrap_unsigned(imm);
             if shift.is_some() {
-                return Ok(false);
+                return Err(CompileError::UnsupportedInstruction);
             }
             let codes = if is_sub { &SUB_RI_CODES } else { &ADD_RI_CODES };
             if is_sub || set_flags {
@@ -306,9 +306,9 @@ fn translate_add_sub(
                 dest_translation.post_write(ass, reg_class)?;
             }
         }
-        _ => return Ok(false),
+        _ => return Err(CompileError::UnsupportedInstruction),
     }
-    Ok(true)
+    Ok(())
 }
 
 fn translate_shift(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) -> CompileResult<()> {
@@ -715,8 +715,8 @@ pub fn compile_instr(
             let addr = label_target(operands[1]);
             make_mov_ri64(ass, dest_translation, addr as i64)?;
         }
-        Op::ADD | Op::SUB => return translate_add_sub(arm_instr, ass, false),
-        Op::ADDS | Op::SUBS => return translate_add_sub(arm_instr, ass, true),
+        Op::ADD | Op::SUB => translate_add_sub(arm_instr, ass, false)?,
+        Op::ADDS | Op::SUBS => translate_add_sub(arm_instr, ass, true)?,
         Op::ASR | Op::LSR | Op::LSL => translate_shift(arm_instr, ass)?,
         Op::SXTW | Op::SXTH | Op::SXTB | Op::UXTH | Op::UXTB => {
             let (dest, dest_class) = translate_reg(unwrap_reg(operands[0]))?;
