@@ -5,9 +5,13 @@ mod wrapped;
 use std::{env, ffi::CString, os::unix::ffi::OsStringExt};
 
 fn main() {
-    let mut args = env::args_os().skip(1);
-    let exec_name = args.next().expect("expected name of executable");
+    let exec_name = env::args_os()
+        .skip(1)
+        .next()
+        .expect("expected name of executable");
     let exec_name = CString::new(exec_name.into_vec()).unwrap();
+
+    let args = env::args_os().skip(1);
     let args: Vec<*const u8> = args
         .map(|str| {
             let mut bytes = str.into_vec();
