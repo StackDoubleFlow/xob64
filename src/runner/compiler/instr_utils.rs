@@ -31,7 +31,12 @@ pub mod codes {
         OpRRCodes::new(And_r32_rm32, And_rm32_r32, And_r64_rm64, And_rm64_r64);
     pub const AND_RI_CODES: OpRICodes = OpRICodes::new(And_rm32_imm32, And_rm64_imm32);
 
+    pub const OR_RR_CODES: OpRRCodes =
+        OpRRCodes::new(Or_r32_rm32, Or_rm32_r32, Or_r64_rm64, Or_rm64_r64);
     pub const OR_RI_CODES: OpRICodes = OpRICodes::new(Or_rm32_imm32, Or_rm64_imm32);
+
+    pub const XOR_RR_CODES: OpRRCodes =
+        OpRRCodes::new(Xor_r32_rm32, Xor_rm32_r32, Xor_r64_rm64, Xor_rm64_r64);
 }
 
 pub struct OpRRCodes {

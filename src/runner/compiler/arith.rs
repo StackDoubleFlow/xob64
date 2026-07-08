@@ -9,7 +9,7 @@ use crate::runner::compiler::{
         IcedResult, OpRICodes, OpRRCodes,
         codes::{
             ADD_RI_CODES, ADD_RR_CODES, AND_RI_CODES, AND_RR_CODES, CMP_RI_CODES, MOV_RI_CODES,
-            OR_RI_CODES, SUB_RI_CODES, SUB_RR_CODES,
+            OR_RI_CODES, OR_RR_CODES, SUB_RI_CODES, SUB_RR_CODES, XOR_RR_CODES,
         },
         get_alt_reg, get_shamt_from_shift, label_target, make_cmp_rr, make_mov_ri64, make_mov_rr,
         make_ri, make_rr,
@@ -623,6 +623,35 @@ fn translate_cset(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) -> Ic
     Ok(())
 }
 
+fn translate_logical(
+    arm_instr: &bad64::Instruction,
+    ass: &mut CodeAssembler,
+    codes: &OpRRCodes,
+) -> IcedResult<()> {
+    let operands = arm_instr.operands();
+    let (dest, reg_class) = translate_reg(unwrap_reg(operands[0]));
+    let (src1, _) = translate_reg(unwrap_reg(operands[1]));
+
+    match operands[2] {
+        bad64::Operand::Reg { reg: src2, .. } => {
+            let (src2, _) = translate_reg(src2);
+            make_rrr(ass, codes, dest, src1, src2, reg_class)?;
+        }
+        bad64::Operand::Imm64 { imm, .. } | bad64::Operand::Imm32 { imm, .. } => {
+            // Full width bit patterns can be encoded in logical immediate instruction
+            let imm = unwrap_unsigned(imm);
+            if dest != src1 {
+                make_mov_rr(ass, reg_class, dest, src1)?;
+            }
+            ass.mov(gpr64::rax, imm)?;
+            let scratch = reg_class.scratch_translation();
+            make_rr(ass, codes, reg_class, dest, scratch)?;
+        }
+        _ => unreachable!(),
+    }
+    Ok(())
+}
+
 // Returns true if the instruction was successfully translated.
 pub fn compile_instr(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) -> IcedResult<bool> {
     use bad64::Op;
@@ -646,28 +675,9 @@ pub fn compile_instr(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) ->
                 operand => todo!("operand: {:?}", operand),
             }
         }
-        Op::AND => {
-            let (dest, reg_class) = translate_reg(unwrap_reg(operands[0]));
-            let (src1, _) = translate_reg(unwrap_reg(operands[1]));
-
-            match operands[2] {
-                bad64::Operand::Reg { reg: src2, .. } => {
-                    let (src2, _) = translate_reg(src2);
-                    make_rrr(ass, &AND_RR_CODES, dest, src1, src2, reg_class)?;
-                }
-                bad64::Operand::Imm64 { imm, .. } | bad64::Operand::Imm32 { imm, .. } => {
-                    // Full width bit patterns can be encoded in logical immediate instruction
-                    let imm = unwrap_unsigned(imm);
-                    if dest != src1 {
-                        make_mov_rr(ass, reg_class, dest, src1)?;
-                    }
-                    ass.mov(gpr64::rax, imm)?;
-                    let scratch = reg_class.scratch_translation();
-                    make_rr(ass, &AND_RR_CODES, reg_class, dest, scratch)?;
-                }
-                _ => unreachable!(),
-            }
-        }
+        Op::AND => translate_logical(arm_instr, ass, &AND_RR_CODES)?,
+        Op::ORR => translate_logical(arm_instr, ass, &OR_RR_CODES)?,
+        Op::EOR => translate_logical(arm_instr, ass, &XOR_RR_CODES)?,
         Op::MOVK => {
             let (dest, reg_class) = translate_reg(unwrap_reg(operands[0]));
             let (imm, shift) = unwrap_imm(operands[1]);
