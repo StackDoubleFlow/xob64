@@ -736,7 +736,7 @@ pub fn compile_instr(
             let imm = imm << shift;
             let mask = !(0xFFFFu64 << shift);
 
-            if shift > 24 {
+            if shift > 16 {
                 ass.mov(gpr64::rax, mask)?;
                 let mut and =
                     Instruction::with2(Code::And_rm64_r64, Register::None, Register::RAX)?;

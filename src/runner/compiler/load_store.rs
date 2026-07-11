@@ -271,13 +271,12 @@ fn load_store_pair(
         0,
         LSWidth::RegClass,
     )?;
-    let incr = if reg_class == RegClass::GPR32 { 4 } else { 8 };
     gen_fn(
         ass,
         reg2_translation,
         reg_class,
         &addr_mode_info,
-        incr,
+        reg_class.byte_size() as i64,
         LSWidth::RegClass,
     )?;
 

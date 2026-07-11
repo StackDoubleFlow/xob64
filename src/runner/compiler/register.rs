@@ -162,6 +162,16 @@ impl NativeRegClass {
 }
 
 impl RegClass {
+    pub fn byte_size(self) -> u64 {
+        match self {
+            RegClass::GPR64 => 8,
+            RegClass::GPR32 => 4,
+            RegClass::FP128 => 16,
+            RegClass::FP64 => 8,
+            RegClass::FP32 => 4,
+            _ => todo!(),
+        }
+    }
     pub fn scratch(self) -> Register {
         match self {
             RegClass::GPR64 => Register::RAX,
