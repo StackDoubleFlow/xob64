@@ -43,6 +43,7 @@ impl WrappedLib {
 
     pub fn get_symbol(&self, name: &CStr) -> Option<*const u8> {
         if let Some(&ov) = self.overrides.get(name) {
+            eprintln!("using override for {name:?}: {ov:?}");
             return Some(ov);
         }
 
@@ -59,8 +60,10 @@ impl WrappedLib {
             {
                 let addr = sym.st_value + self.base_addr;
                 let addr = if ty == elf::STT_FUNC || ty == elf::STT_GNU_IFUNC {
+                    eprintln!("making proxy for {name:?}: {addr}");
                     create_lib_proxy(addr).unwrap()
                 } else {
+                    eprintln!("direct global object {name:?}: {addr}");
                     addr as _
                 };
                 return Some(addr);
