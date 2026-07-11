@@ -38,6 +38,8 @@ pub mod codes {
 
     pub const XOR_RR_CODES: OpRRCodes =
         OpRRCodes::new(Xor_r32_rm32, Xor_rm32_r32, Xor_r64_rm64, Xor_rm64_r64);
+
+    pub const SHL_RI_CODES: OpRICodes = OpRICodes::new(Shl_rm32_imm8, Shl_rm64_imm8);
 }
 
 pub struct OpRRCodes {
@@ -56,6 +58,14 @@ impl OpRRCodes {
             rm64_r64,
         }
     }
+
+    pub fn r_rm(&self, reg_class: RegClass) -> Code {
+        match reg_class {
+            RegClass::GPR32 => self.r32_rm32,
+            RegClass::GPR64 => self.r64_rm64,
+            _ => unreachable!(),
+        }
+    }
 }
 
 pub struct OpRICodes {
@@ -68,6 +78,14 @@ impl OpRICodes {
         Self {
             rm32_imm32,
             rm64_imm32,
+        }
+    }
+
+    pub fn for_class(&self, reg_class: RegClass) -> Code {
+        match reg_class {
+            RegClass::GPR32 => self.rm32_imm32,
+            RegClass::GPR64 => self.rm64_imm32,
+            _ => unreachable!(),
         }
     }
 }

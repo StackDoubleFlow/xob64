@@ -10,7 +10,8 @@ use crate::runner::compiler::{
         OpRICodes, OpRRCodes,
         codes::{
             ADD_RI_CODES, ADD_RR_CODES, AND_RI_CODES, AND_RR_CODES, CMP_RI_CODES, MOV_RI_CODES,
-            OR_RI_CODES, OR_RR_CODES, SUB_RI_CODES, SUB_RR_CODES, XOR_RR_CODES,
+            MOV_RR_CODES, OR_RI_CODES, OR_RR_CODES, SHL_RI_CODES, SUB_RI_CODES, SUB_RR_CODES,
+            XOR_RR_CODES,
         },
         get_shamt_from_shift, label_target, make_cmp_rr, make_mov_ri64, make_mov_rr, make_ri,
         make_rr,
@@ -653,6 +654,47 @@ fn translate_logical(
     Ok(())
 }
 
+fn translate_ubfiz(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) -> CompileResult<()> {
+    let operands = arm_instr.operands();
+    let (dest, reg_class) = translate_reg(unwrap_reg(operands[0]))?;
+    let (src, _) = translate_reg(unwrap_reg(operands[1]))?;
+    let lsb = unwrap_unsigned(unwrap_imm(operands[2]).0);
+    let width = unwrap_unsigned(unwrap_imm(operands[3]).0);
+
+    if dest != src && !dest.is_indirect() {
+        let mut mov =
+            Instruction::with2(MOV_RR_CODES.r_rm(reg_class), Register::None, Register::None)?;
+        dest.set_reg_operand(&mut mov, 0);
+        src.set_operand(&mut mov, 1);
+    }
+
+    let code = match reg_class {
+        RegClass::GPR64 => Code::VEX_Bzhi_r64_rm64_r64,
+        RegClass::GPR32 => Code::VEX_Bzhi_r32_rm32_r32,
+        _ => unimplemented!(),
+    };
+    ass.mov(gpr32::eax, width as u32)?;
+    let mut bzhi = Instruction::with3(
+        code,
+        dest.reg_operand(),
+        Register::None,
+        reg_class.scratch(),
+    )?;
+    src.set_operand(&mut bzhi, 1);
+    ass.add_instruction(bzhi)?;
+
+    let shl = Instruction::with2(
+        SHL_RI_CODES.for_class(reg_class),
+        dest.reg_operand(),
+        lsb as i32,
+    )?;
+    ass.add_instruction(shl)?;
+
+    dest.post_write(ass, reg_class)?;
+
+    Ok(())
+}
+
 // Returns true if the instruction was successfully translated.
 pub fn compile_instr(
     arm_instr: &bad64::Instruction,
@@ -782,6 +824,7 @@ pub fn compile_instr(
             ass.add_instruction(andn)?;
             dest.post_write(ass, reg_class)?;
         }
+        Op::UBFIZ => translate_ubfiz(arm_instr, ass)?,
         _ => return Ok(false),
     }
 
