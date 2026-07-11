@@ -231,7 +231,7 @@ fn translate_add_sub(
 
     match operands[2] {
         bad64::Operand::ShiftReg { reg, shift } => {
-            let (src2_translation, src2_class) = translate_reg(reg)?;
+            let (src2_translation, src2_class) = translate_reg((reg, None))?;
             let dest_reg = dest_translation.reg_operand();
             load_shifted(
                 ass,
@@ -252,7 +252,7 @@ fn translate_add_sub(
             dest_translation.post_write(ass, reg_class)?;
         }
         bad64::Operand::Reg { reg, .. } => {
-            let (src2_translation, _) = translate_reg(reg)?;
+            let (src2_translation, _) = translate_reg((reg, None))?;
             if is_sub {
                 // We can't use lea for sub
                 make_rrr(
@@ -339,7 +339,7 @@ fn translate_shift(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) -> C
 
     match operands[2] {
         bad64::Operand::Reg { reg, .. } => {
-            let (src2_translation, _) = translate_reg(reg)?;
+            let (src2_translation, _) = translate_reg((reg, None))?;
             src2_translation.pre_read(ass, reg_class)?;
             let mut shift_inst =
                 Instruction::with3(r_rm_r, Register::None, Register::None, Register::None)?;
@@ -368,7 +368,7 @@ fn translate_cmp_cmn(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) ->
     let (src1, reg_class) = translate_reg(unwrap_reg(operands[0]))?;
     match operands[1] {
         bad64::Operand::Reg { reg: src2, .. } => {
-            let (src2, _) = translate_reg(src2)?;
+            let (src2, _) = translate_reg((src2, None))?;
             if arm_instr.op() == bad64::Op::CMP {
                 make_cmp_rr(ass, reg_class, src1, src2)?;
             } else {
@@ -559,7 +559,7 @@ fn translate_ccmp(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) -> Co
     // `cmp <src1>, <src2|imm>
     match operands[1] {
         bad64::Operand::Reg { reg: src2, .. } => {
-            let (src2, _) = translate_reg(src2)?;
+            let (src2, _) = translate_reg((src2, None))?;
             make_cmp_rr(ass, reg_class, src1, src2)?;
         }
         bad64::Operand::Imm32 { imm, .. } | bad64::Operand::Imm64 { imm, .. } => {
@@ -634,7 +634,7 @@ fn translate_logical(
 
     match operands[2] {
         bad64::Operand::Reg { reg: src2, .. } => {
-            let (src2, _) = translate_reg(src2)?;
+            let (src2, _) = translate_reg((src2, None))?;
             make_rrr(ass, codes, dest, src1, src2, reg_class)?;
         }
         bad64::Operand::Imm64 { imm, .. } | bad64::Operand::Imm32 { imm, .. } => {
@@ -667,7 +667,7 @@ pub fn compile_instr(
 
             match operands[1] {
                 bad64::Operand::Reg { reg: src, .. } => {
-                    let (src_translation, _) = translate_reg(src)?;
+                    let (src_translation, _) = translate_reg((src, None))?;
                     make_mov_rr(ass, reg_class, dest, src_translation)?;
                 }
                 bad64::Operand::Imm64 { imm, .. } | bad64::Operand::Imm32 { imm, .. } => {
@@ -746,6 +746,22 @@ pub fn compile_instr(
         Op::CSEL => translate_csel(arm_instr, ass)?,
         Op::CCMP => translate_ccmp(arm_instr, ass)?,
         Op::CSET => translate_cset(arm_instr, ass)?,
+        Op::MOVI => {
+            let (dest, reg_class) = translate_reg(unwrap_reg(operands[0]))?;
+            let (imm, shift) = unwrap_imm(operands[1]);
+            assert_eq!(shift, None);
+            let imm = unwrap_unsigned(imm);
+            if imm == 0 {
+                let mut xor =
+                    Instruction::with2(Code::Xorps_xmm_xmmm128, Register::None, Register::None)?;
+                dest.set_reg_operand(&mut xor, 0);
+                dest.set_reg_operand(&mut xor, 1);
+                ass.add_instruction(xor)?;
+                dest.post_write(ass, reg_class)?;
+            } else {
+                return Err(CompileError::UnsupportedInstruction);
+            }
+        }
         _ => return Ok(false),
     }
 

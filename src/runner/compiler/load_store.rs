@@ -58,7 +58,7 @@ fn process_addr_mode(
         _ => todo!("memory address operand: {:?}", mem_operand),
     };
     let imm = any_offset_sign(imm);
-    let (base_reg_translation, _) = translate_reg(base_reg)?;
+    let (base_reg_translation, _) = translate_reg((base_reg, None))?;
 
     let mut pop_base_reg = false;
     let needs_scratch_base_reg = reg_offset.is_some() || base_reg_translation.is_indirect();
@@ -79,7 +79,7 @@ fn process_addr_mode(
     };
 
     if let Some((reg_offset, shift)) = reg_offset {
-        let (reg_offset, _) = translate_reg(reg_offset)?;
+        let (reg_offset, _) = translate_reg((reg_offset, None))?;
 
         // Load the offset to our chosen scratch register
         if let Some(shift) = shift {

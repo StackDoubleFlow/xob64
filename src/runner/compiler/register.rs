@@ -137,6 +137,7 @@ pub enum RegClass {
     FP32,
     FP16,
     FP8,
+    SIMD(bad64::ArrSpec),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -165,9 +166,12 @@ impl RegClass {
         match self {
             RegClass::GPR64 => Register::RAX,
             RegClass::GPR32 => Register::EAX,
-            RegClass::FP128 | RegClass::FP64 | RegClass::FP32 | RegClass::FP16 | RegClass::FP8 => {
-                Register::XMM15
-            }
+            RegClass::FP128
+            | RegClass::FP64
+            | RegClass::FP32
+            | RegClass::FP16
+            | RegClass::FP8
+            | RegClass::SIMD(_) => Register::XMM15,
         }
     }
 
@@ -179,15 +183,21 @@ impl RegClass {
         match self {
             RegClass::GPR64 => NativeRegClass::GPR64,
             RegClass::GPR32 => NativeRegClass::GPR32,
-            RegClass::FP128 | RegClass::FP64 | RegClass::FP32 | RegClass::FP16 | RegClass::FP8 => {
-                NativeRegClass::XMM
-            }
+            RegClass::FP128
+            | RegClass::FP64
+            | RegClass::FP32
+            | RegClass::FP16
+            | RegClass::FP8
+            | RegClass::SIMD(_) => NativeRegClass::XMM,
         }
     }
 }
 
 // Returns the RegClass and the top-level Reg
-pub fn get_reg_class(reg: bad64::Reg) -> CompileResult<(RegClass, bad64::Reg)> {
+pub fn get_reg_class(
+    reg: bad64::Reg,
+    arrspec: Option<bad64::ArrSpec>,
+) -> CompileResult<(RegClass, bad64::Reg)> {
     use bad64::Reg;
     let rn = reg as u32;
     let result = if reg == Reg::SP || rn >= Reg::X0 as u32 && rn <= Reg::XZR as u32 {
@@ -221,6 +231,8 @@ pub fn get_reg_class(reg: bad64::Reg) -> CompileResult<(RegClass, bad64::Reg)> {
             RegClass::FP8,
             Reg::from_u32(rn - Reg::B0 as u32 + Reg::Q0 as u32).unwrap(),
         )
+    } else if rn >= Reg::V0 as u32 && rn <= Reg::V31 as u32 {
+        (RegClass::SIMD(arrspec.unwrap()), reg)
     } else {
         return Err(CompileError::UnsupportedInstruction);
     };
@@ -278,6 +290,7 @@ pub fn lower_reg_to_class(reg: Register, class: RegClass) -> Register {
         RegClass::GPR32 => lower_reg_to_native_class(reg, NativeRegClass::GPR32),
         // These all have the same register names in x86_64, just the instruction changes
         RegClass::FP128 | RegClass::FP64 | RegClass::FP32 | RegClass::FP16 | RegClass::FP8 => reg,
+        RegClass::SIMD(_) => unimplemented!(),
     }
 }
 
@@ -292,9 +305,13 @@ fn translate_indirect_reg(reg: bad64::Reg, reg_class: RegClass) -> CompileResult
     } else if rn >= X24 as u32 && rn <= X28 as u32 {
         Indirect((rn - X24 as u32 + 13) * 8, native_class)
     } else if rn >= Q8 as u32 && rn <= Q15 as u32 {
-        Indirect(fp_offset + (rn - X8 as u32) * 16, native_class)
+        Indirect(fp_offset + (rn - Q8 as u32) * 16, native_class)
     } else if rn >= Q23 as u32 && rn <= Q31 as u32 {
-        Indirect(fp_offset + (rn - X8 as u32 + 8) * 16, native_class)
+        Indirect(fp_offset + (rn - Q23 as u32 + 8) * 16, native_class)
+    } else if rn >= V8 as u32 && rn <= V15 as u32 {
+        Indirect(fp_offset + (rn - V8 as u32) * 16, native_class)
+    } else if rn >= V23 as u32 && rn <= V31 as u32 {
+        Indirect(fp_offset + (rn - V23 as u32 + 8) * 16, native_class)
     } else if reg == bad64::Reg::XZR {
         RegTranslation::Zero(reg_class.to_native_class())
     } else {
@@ -302,9 +319,11 @@ fn translate_indirect_reg(reg: bad64::Reg, reg_class: RegClass) -> CompileResult
     })
 }
 
-pub fn translate_reg(reg: bad64::Reg) -> CompileResult<(RegTranslation, RegClass)> {
+pub fn translate_reg(
+    (reg, arrspec): (bad64::Reg, Option<bad64::ArrSpec>),
+) -> CompileResult<(RegTranslation, RegClass)> {
     use bad64::Reg::*;
-    let (reg_class, top_level_reg) = get_reg_class(reg)?;
+    let (reg_class, top_level_reg) = get_reg_class(reg, arrspec)?;
     let direct_translation = match top_level_reg {
         // These are sorted by frequency. See the comment at the top of the file.
         X0 => Register::RDI,
@@ -322,21 +341,21 @@ pub fn translate_reg(reg: bad64::Reg) -> CompileResult<(RegTranslation, RegClass
         X23 => Register::R10,
         X30 => Register::R11,
 
-        Q0 => Register::XMM0,
-        Q1 => Register::XMM1,
-        Q2 => Register::XMM2,
-        Q3 => Register::XMM3,
-        Q4 => Register::XMM4,
-        Q5 => Register::XMM5,
-        Q6 => Register::XMM6,
-        Q7 => Register::XMM7,
-        Q16 => Register::XMM8,
-        Q17 => Register::XMM9,
-        Q18 => Register::XMM10,
-        Q19 => Register::XMM11,
-        Q20 => Register::XMM12,
-        Q21 => Register::XMM13,
-        Q22 => Register::XMM14,
+        Q0 | V0 => Register::XMM0,
+        Q1 | V1 => Register::XMM1,
+        Q2 | V2 => Register::XMM2,
+        Q3 | V3 => Register::XMM3,
+        Q4 | V4 => Register::XMM4,
+        Q5 | V5 => Register::XMM5,
+        Q6 | V6 => Register::XMM6,
+        Q7 | V7 => Register::XMM7,
+        Q16 | V16 => Register::XMM8,
+        Q17 | V17 => Register::XMM9,
+        Q18 | V18 => Register::XMM10,
+        Q19 | V19 => Register::XMM11,
+        Q20 | V20 => Register::XMM12,
+        Q21 | V21 => Register::XMM13,
+        Q22 | V22 => Register::XMM14,
 
         _ => return Ok((translate_indirect_reg(top_level_reg, reg_class)?, reg_class)),
     };
@@ -346,9 +365,9 @@ pub fn translate_reg(reg: bad64::Reg) -> CompileResult<(RegTranslation, RegClass
     ))
 }
 
-pub fn unwrap_reg(operand: bad64::Operand) -> bad64::Reg {
+pub fn unwrap_reg(operand: bad64::Operand) -> (bad64::Reg, Option<bad64::ArrSpec>) {
     match operand {
-        bad64::Operand::Reg { reg, .. } => reg,
+        bad64::Operand::Reg { reg, arrspec } => (reg, arrspec),
         _ => panic!("unwrapped reg on non-reg operand: {:?}", operand),
     }
 }
