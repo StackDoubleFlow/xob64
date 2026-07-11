@@ -162,6 +162,9 @@ pub fn make_mov_rr(
     dest: RegTranslation,
     src: RegTranslation,
 ) -> CompileResult<()> {
+    if matches!(src, RegTranslation::Zero(_)) {
+        return make_rr(ass, &codes::XOR_RR_CODES, reg_class, dest, dest);
+    }
     make_rr_impl(ass, &codes::MOV_RR_CODES, reg_class, dest, src, false, true)
 }
 
