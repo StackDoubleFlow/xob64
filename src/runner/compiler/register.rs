@@ -265,10 +265,11 @@ pub fn lower_reg_to_native_class(reg: Register, class: NativeRegClass) -> Regist
         }
         NativeRegClass::GPR8 => {
             if rn >= Register::RAX as u32 && rn <= Register::R15 as u32 {
-                if rn <= Register::BL as u32 {
-                    reg - Register::RAX as u32 + Register::AL as u32
+                let reg = reg - Register::RAX as u32 + Register::AL as u32;
+                if rn <= Register::RBX as u32 {
+                    reg
                 } else {
-                    reg - Register::RAX as u32 + Register::SPL as u32
+                    reg + 4
                 }
             } else {
                 panic!("Tried to lower {:?} to GPR8", reg);
