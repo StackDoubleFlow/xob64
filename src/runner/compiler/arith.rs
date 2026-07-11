@@ -763,6 +763,25 @@ pub fn compile_instr(
                 return Err(CompileError::UnsupportedInstruction);
             }
         }
+        Op::BIC => {
+            let (dest, reg_class) = translate_reg(unwrap_reg(operands[0]))?;
+            let (src1, _) = translate_reg(unwrap_reg(operands[1]))?;
+            let (src2, _) = translate_reg(unwrap_reg(operands[2]))?;
+            let code = match reg_class {
+                RegClass::GPR64 => Code::VEX_Andn_r64_r64_rm64,
+                RegClass::GPR32 => Code::VEX_Andn_r32_r32_rm32,
+                _ => return Err(CompileError::UnsupportedInstruction),
+            };
+            src2.pre_read(ass, reg_class)?;
+            let mut andn =
+                Instruction::with3(code, Register::None, Register::None, Register::None)?;
+            dest.set_reg_operand(&mut andn, 0);
+            // Operand order intentionally reversed
+            src2.set_reg_operand(&mut andn, 1);
+            src1.set_operand(&mut andn, 2);
+            ass.add_instruction(andn)?;
+            dest.post_write(ass, reg_class)?;
+        }
         _ => return Ok(false),
     }
 
