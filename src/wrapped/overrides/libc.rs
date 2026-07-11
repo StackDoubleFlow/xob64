@@ -22,7 +22,7 @@ extern "C" fn __cxa_atexit_impl(
     dso: *const u8,
 ) -> nix::libc::c_int {
     eprintln!(
-        "TODO: called atexit({:?}, {:?}, {:?})",
+        "TODO: called __cxa_atexit({:?}, {:?}, {:?})",
         callback_fn, operand, dso
     );
     0

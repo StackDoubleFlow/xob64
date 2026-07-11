@@ -195,6 +195,7 @@ fn make_rri(
         ass.add_instruction(mov)?;
         let mut op = Instruction::with2(op_code, Register::None, imm)?;
         dest_translation.set_reg_operand(&mut op, 0);
+        ass.add_instruction(op)?;
         dest_translation.post_write(ass, reg_class)?;
     }
     Ok(())
