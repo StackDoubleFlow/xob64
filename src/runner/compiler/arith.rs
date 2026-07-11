@@ -489,7 +489,7 @@ fn translate_csel(arm_instr: &bad64::Instruction, ass: &mut CodeAssembler) -> Co
         } else {
             cmov32
         },
-        Register::RAX,
+        reg_class.scratch(),
         Register::None,
     )?;
     src1.set_operand(&mut cmov, 1);
