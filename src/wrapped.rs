@@ -59,11 +59,15 @@ impl WrappedLib {
             if (bind == elf::STB_GLOBAL || bind == elf::STB_WEAK) && sym.st_shndx != elf::SHN_UNDEF
             {
                 let addr = sym.st_value + self.base_addr;
-                let addr = if ty == elf::STT_FUNC || ty == elf::STT_GNU_IFUNC {
-                    eprintln!("making proxy for {name:?}: {addr}");
+                let addr = if ty == elf::STT_FUNC {
+                    eprintln!("making proxy for {name:?}: {addr:#x}");
+                    create_lib_proxy(addr).unwrap()
+                } else if ty == elf::STT_GNU_IFUNC {
+                    let addr = resolve_ifunc(addr);
+                    eprintln!("resolved ifunc proxy for {name:?}: {addr:#x}");
                     create_lib_proxy(addr).unwrap()
                 } else {
-                    eprintln!("direct global object {name:?}: {addr}");
+                    eprintln!("direct global object {name:?}: {addr:#x}");
                     addr as _
                 };
                 return Some(addr);
@@ -72,6 +76,11 @@ impl WrappedLib {
 
         None
     }
+}
+
+fn resolve_ifunc(addr: u64) -> u64 {
+    let fn_ptr: extern "C" fn() -> u64 = unsafe { std::mem::transmute(addr) };
+    fn_ptr()
 }
 
 fn dlopen(name: &CStr) -> *mut nix::libc::c_void {
