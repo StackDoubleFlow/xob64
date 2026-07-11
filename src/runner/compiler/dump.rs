@@ -26,19 +26,19 @@ fn dump_instr_pair(
             Ok(arm_instr) => format!("{}", arm_instr),
             Err(_) => "invalid instruction".to_string(),
         };
-        eprint!("{:?}: {:<70}", arm_instr_addr as *const u8, arm_asm);
+        debug_print!("{:?}: {:<70}", arm_instr_addr as *const u8, arm_asm);
     } else {
-        eprint!("{:<86}", "");
+        debug_print!("{:<86}", "");
     }
 
     if let Some(x86_instr) = x86_instr {
-        eprint!(
+        debug_print!(
             "{:?}: {}",
             x86_instr.ip() as *const u8,
             formatter.format(x86_instr)
         );
     }
-    eprintln!();
+    debug_println!();
 }
 
 pub fn dump_translation(chunk_addr: usize, compiled_chunk: &CompiledChunk) {

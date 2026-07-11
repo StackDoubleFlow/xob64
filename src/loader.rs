@@ -80,9 +80,10 @@ unsafe fn load_segment(segment: ElfSegment64, fd: i32, base_addr: *const u8) {
         panic!("file mapping starts before page mapping: {}", map_offset);
     }
 
-    eprintln!(
+    debug_println!(
         "Attempting mapping at address {:?} with size {:#x}",
-        aligned_addr, aligned_size
+        aligned_addr,
+        aligned_size
     );
     // Map segment
     let mapped_addr = unsafe {
@@ -105,14 +106,14 @@ unsafe fn load_segment(segment: ElfSegment64, fd: i32, base_addr: *const u8) {
         );
     }
 
-    eprintln!("mapping successful: {:?}", mapped_addr);
+    debug_println!("mapping successful: {:?}", mapped_addr);
 
     let segment_end = mapped_addr as usize + aligned_size;
     let mapping_end = align_to_next(segment_end, *PAGE_SIZE);
     // If the file mapping ends before the segment does, then we need to zero out the rest
     if segment.size() > file_size {
         let file_load_end = mapped_addr as usize + page_offset + file_size as usize;
-        eprintln!("zeroing out from {:x} to {:x}", file_load_end, mapping_end);
+        debug_println!("zeroing out from {:x} to {:x}", file_load_end, mapping_end);
         let page_break = align_to_next(file_load_end, *PAGE_SIZE);
         unsafe {
             // Write 0 from the end of the file to end of the page

@@ -29,7 +29,7 @@ impl WrappedLib {
         let overrides = overrides::get_overrides(name);
 
         let obj_info = elf_lookup::loaded_object_info(name).unwrap();
-        eprintln!("Loaded wrapped library: {:?}", &obj_info.path);
+        debug_println!("Loaded wrapped library: {:?}", &obj_info.path);
         let symbol_finder = SymbolFinder::new(&obj_info);
 
         Some(Self {
@@ -43,7 +43,7 @@ impl WrappedLib {
 
     pub fn get_symbol(&self, name: &CStr) -> Option<*const u8> {
         if let Some(&ov) = self.overrides.get(name) {
-            eprintln!("using override for {name:?}: {ov:?}");
+            debug_println!("using override for {name:?}: {ov:?}");
             return Some(ov);
         }
 
@@ -60,14 +60,14 @@ impl WrappedLib {
             {
                 let addr = sym.st_value + self.base_addr;
                 let addr = if ty == elf::STT_FUNC {
-                    eprintln!("making proxy for {name:?}: {addr:#x}");
+                    debug_println!("making proxy for {name:?}: {addr:#x}");
                     create_lib_proxy(addr).unwrap()
                 } else if ty == elf::STT_GNU_IFUNC {
                     let addr = resolve_ifunc(addr);
-                    eprintln!("resolved ifunc proxy for {name:?}: {addr:#x}");
+                    debug_println!("resolved ifunc proxy for {name:?}: {addr:#x}");
                     create_lib_proxy(addr).unwrap()
                 } else {
-                    eprintln!("direct global object {name:?}: {addr:#x}");
+                    debug_println!("direct global object {name:?}: {addr:#x}");
                     addr as _
                 };
                 return Some(addr);

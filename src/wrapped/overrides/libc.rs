@@ -21,9 +21,11 @@ extern "C" fn __cxa_atexit_impl(
     operand: *const u8,
     dso: *const u8,
 ) -> nix::libc::c_int {
-    eprintln!(
+    debug_println!(
         "TODO: called __cxa_atexit({:?}, {:?}, {:?})",
-        callback_fn, operand, dso
+        callback_fn,
+        operand,
+        dso
     );
     0
 }
@@ -35,7 +37,7 @@ extern "C" fn __libc_start_main_impl(main_fn: *const u8, argc: u32, argv: *const
     let ctx_ptr = &mut ctx as *mut ExecCtx;
     let target = get_exec(main_fn);
 
-    eprintln!("calling main: {:?} -> {:?}", main_fn, target);
+    debug_println!("calling main: {:?} -> {:?}", main_fn, target);
     let mut result = argc;
     unsafe {
         std::arch::asm!(

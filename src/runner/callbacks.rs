@@ -55,18 +55,18 @@ macro_rules! resumable_landing_pad {
 }
 
 pub extern "C" fn invalid_arm_instr() {
-    eprintln!("todo: invalid arm instruction");
+    debug_println!("todo: invalid arm instruction");
     std::process::abort();
 }
 
 landing_pad!(unimplemented_arm_instr_landing_pad, unimplemented_arm_instr);
 extern "C" fn unimplemented_arm_instr(_ctx: *mut ExecCtx, ret_ptr: *const u8) {
-    eprintln!("todo: unimplemented arm instruction");
+    debug_println!("todo: unimplemented arm instruction");
 
     // 12 is the length of the mov + call
     let arm_ptr = from_exec(ret_ptr.wrapping_sub(12));
     let arm_code = unsafe { *(arm_ptr as *const u32) };
-    eprintln!(
+    debug_println!(
         "{:?}: {}",
         arm_ptr,
         // We should never fail to decode here since that an invalid instruction would have triggered the invalid_arm_instr callback.
@@ -84,7 +84,7 @@ extern "C" fn rewrite_branch(_ctx: *mut ExecCtx, ret_ptr: *const u8) -> u64 {
     let arm_code = unsafe { *(arm_ptr as *const u32) };
     let arm_instr = bad64::decode(arm_code, arm_ptr as u64).expect("failed to decode instr");
 
-    eprintln!(
+    debug_println!(
         "rewriting branch at {:?}: {}",
         arm_ptr,
         // We should never fail to decode here since that an invalid instruction would have triggered the invalid_arm_instr callback.
@@ -103,9 +103,11 @@ extern "C" fn indirect_jump(ctx: *mut ExecCtx, ret_ptr: *const u8) -> u64 {
 
     // 12 is the length of the mov + call
     let call_ptr = ret_ptr.wrapping_sub(12);
-    eprintln!(
+    debug_println!(
         "indirect jump at {:?} to {:#x} -> {:#x}",
-        call_ptr, ctx.param, target_addr as u64
+        call_ptr,
+        ctx.param,
+        target_addr as u64
     );
     target_addr as u64
 }
@@ -118,9 +120,10 @@ extern "C" fn end_of_chunk(_ctx: *mut ExecCtx, ret_ptr: *const u8) -> u64 {
     let next_arm_ptr = arm_ptr.wrapping_byte_add(4);
     let next_chunk_start = get_exec(next_arm_ptr);
     branch::write_jump(call_ptr, next_chunk_start as u64);
-    eprintln!(
+    debug_println!(
         "rewrite end of chunk {:?}, jump to {:?}",
-        call_ptr, next_chunk_start
+        call_ptr,
+        next_chunk_start
     );
     next_chunk_start as u64
 }

@@ -53,9 +53,10 @@ static EXEC_POOL: LazyLock<Arc<Mutex<ExecPool>>> =
 pub fn define_exec_range(start: *const u8, end: *const u8) {
     let mut exec_pool = EXEC_POOL.lock().unwrap();
     let range = ExecutableRange { start, end };
-    eprintln!(
+    debug_println!(
         "marking executable range: {:?}-{:?}",
-        range.start, range.end
+        range.start,
+        range.end
     );
     exec_pool.exec_ranges.push(range);
 }
@@ -171,12 +172,12 @@ impl Drop for ExecCtx {
 
 pub fn call(ptr: *const u8, args: &[*const u8]) {
     let exec_ptr = get_exec(ptr);
-    eprintln!("calling {:?} -> {:?}", ptr, exec_ptr);
+    debug_println!("calling {:?} -> {:?}", ptr, exec_ptr);
     let mut ctx = ExecCtx::new();
     // The pointers will be filled in by the inline asm
     ctx.push_shadow_stack(std::ptr::null(), std::ptr::null());
     let ctx_ptr = &mut ctx as *mut ExecCtx;
-    eprintln!("ctx_ptr: {:?}", ctx_ptr);
+    debug_println!("ctx_ptr: {:?}", ctx_ptr);
 
     let argc = args.len();
     let argv = args.as_ptr();
@@ -258,7 +259,7 @@ pub fn call(ptr: *const u8, args: &[*const u8]) {
             out("r15") _
         )
     }
-    eprintln!("returned from initializer call");
+    debug_println!("returned from initializer call");
 }
 
 /// Helper function to compile and allocate a generic code assembler
