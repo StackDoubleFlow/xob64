@@ -185,16 +185,12 @@ fn make_rri(
     if dest_translation == src_translation {
         make_ri(ass, codes, reg_class, dest_translation, imm)?;
     } else {
-        let (mov_code, op_code) = match reg_class {
-            RegClass::GPR64 => (Code::Mov_r64_rm64, codes.rm64_imm32),
-            RegClass::GPR32 => (Code::Mov_r32_rm32, codes.rm32_imm32),
-            _ => unimplemented!(),
-        };
-        let mut mov = Instruction::with2(mov_code, Register::None, Register::None)?;
+        let mut mov =
+            Instruction::with2(MOV_RR_CODES.r_rm(reg_class), Register::None, Register::None)?;
         dest_translation.set_reg_operand(&mut mov, 0);
         src_translation.set_operand(&mut mov, 1);
         ass.add_instruction(mov)?;
-        let mut op = Instruction::with2(op_code, Register::None, imm)?;
+        let mut op = Instruction::with2(codes.for_class(reg_class), Register::None, imm)?;
         dest_translation.set_reg_operand(&mut op, 0);
         ass.add_instruction(op)?;
         dest_translation.post_write(ass, reg_class)?;

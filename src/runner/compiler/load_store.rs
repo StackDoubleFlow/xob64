@@ -192,7 +192,8 @@ fn make_store(
         LSWidth::RegClass => match reg_class {
             RegClass::GPR64 => Code::Mov_rm64_r64,
             RegClass::GPR32 => Code::Mov_rm32_r32,
-            RegClass::FP128 => Code::Movaps_xmmm128_xmm,
+            // FP128 may be 8 byte aligned
+            RegClass::FP128 => Code::Movups_xmmm128_xmm,
             RegClass::FP64 => Code::Movsd_xmmm64_xmm,
             RegClass::FP32 => Code::Movss_xmmm32_xmm,
             _ => todo!(),
@@ -225,7 +226,8 @@ fn make_load(
         LSWidth::RegClass => match reg_class {
             RegClass::GPR64 => Code::Mov_r64_rm64,
             RegClass::GPR32 => Code::Mov_r32_rm32,
-            RegClass::FP128 => Code::Movaps_xmm_xmmm128,
+            // FP128 may be 8 byte aligned
+            RegClass::FP128 => Code::Movups_xmm_xmmm128,
             RegClass::FP64 => Code::Movsd_xmm_xmmm64,
             RegClass::FP32 => Code::Movss_xmm_xmmm32,
             _ => todo!(),
